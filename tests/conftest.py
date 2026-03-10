@@ -10,9 +10,13 @@ from nah.config import reset_config
 
 @pytest.fixture(autouse=True)
 def _reset_state():
-    """Reset project root and config cache between tests for isolation."""
+    """Reset project root, config cache, and sensitive paths between tests for isolation."""
+    paths.reset_sensitive_paths()
+    paths._sensitive_paths_merged = True  # prevent real config from polluting tests
     yield
     paths.reset_project_root()
+    paths.reset_sensitive_paths()
+    paths._sensitive_paths_merged = True
     reset_config()
 
 

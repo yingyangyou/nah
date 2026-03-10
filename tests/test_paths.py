@@ -1,10 +1,12 @@
 """Unit tests for nah.paths — path resolution, sensitive checks, project root."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 
 from nah import paths
+from nah.config import NahConfig
 
 
 # --- resolve_path ---
@@ -130,6 +132,9 @@ class TestIsSensitive:
 
 
 class TestCheckPath:
+    def setup_method(self):
+        paths._sensitive_paths_merged = True  # isolate from live config
+
     def test_hook_block_for_write(self):
         result = paths.check_path("Write", "~/.claude/hooks/evil.py")
         assert result is not None
@@ -194,3 +199,57 @@ class TestProjectRoot:
         # We just verify set/get works from a clean state.
         paths.set_project_root("/test/root")
         assert paths.get_project_root() == "/test/root"
+
+
+# --- sensitive path config override ---
+
+
+class TestSensitivePathConfigOverride:
+    """FD-025: Verify config can override hardcoded sensitive path policies."""
+
+    def _mock_config(self, sensitive_paths):
+        return NahConfig(sensitive_paths=sensitive_paths)
+
+    def test_override_ssh_block_to_ask(self):
+        """Global config can relax ~/.ssh from block to ask."""
+        with patch("nah.config.get_config", return_value=self._mock_config({"~/.ssh": "ask"})):
+            paths.reset_sensitive_paths()
+            result = paths.check_path("Read", "~/.ssh/id_rsa")
+        assert result is not None
+        assert result["decision"] == "ask"
+
+    def test_unoverridden_path_keeps_default(self):
+        """Paths not in config keep their hardcoded policy."""
+        with patch("nah.config.get_config", return_value=self._mock_config({"~/.ssh": "ask"})):
+            paths.reset_sensitive_paths()
+            result = paths.check_path("Read", "~/.gnupg/key")
+        assert result is not None
+        assert result["decision"] == "block"
+
+    def test_add_new_sensitive_path(self):
+        """Config can add entirely new sensitive paths."""
+        with patch("nah.config.get_config", return_value=self._mock_config({"~/.kube": "ask"})):
+            paths.reset_sensitive_paths()
+            result = paths.check_path("Read", "~/.kube/config")
+        assert result is not None
+        assert result["decision"] == "ask"
+
+    def test_hook_path_immutable(self):
+        """~/.claude/hooks stays blocked regardless of config."""
+        with patch("nah.config.get_config", return_value=self._mock_config({})):
+            paths.reset_sensitive_paths()
+            result = paths.check_path("Edit", "~/.claude/hooks/nah_guard.py")
+        assert result is not None
+        assert result["decision"] == "block"
+        assert "self-modification" in result["reason"]
+
+    def test_merge_happens_once(self):
+        """Merge is lazy and only runs once per lifecycle."""
+        cfg = self._mock_config({"~/.ssh": "ask"})
+        with patch("nah.config.get_config", return_value=cfg):
+            paths.reset_sensitive_paths()
+            paths._ensure_sensitive_paths_merged()
+            assert paths._sensitive_paths_merged is True
+            # Calling again should not re-merge (flag stays True)
+            paths._ensure_sensitive_paths_merged()
+            assert paths._sensitive_paths_merged is True

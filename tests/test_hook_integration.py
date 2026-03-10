@@ -9,22 +9,29 @@ import pytest
 PYTHON = sys.executable
 
 
-def run_hook_raw(input_str: str) -> dict:
-    """Run the hook as a subprocess, return raw JSON output."""
+def run_hook_raw(input_str: str) -> tuple[dict | None, str]:
+    """Run the hook as a subprocess, return (raw JSON or None, stderr).
+
+    Returns None when stdout is empty (silent allow — FD-028).
+    """
     result = subprocess.run(
         [PYTHON, "-m", "nah.hook"],
         input=input_str,
         capture_output=True, text=True,
     )
+    if not result.stdout.strip():
+        return None, result.stderr
     return json.loads(result.stdout), result.stderr
 
 
 def run_hook(input_dict: dict) -> tuple[str, str]:
     """Run hook, return (decision, reason) using hookSpecificOutput protocol.
 
-    Maps protocol decisions: deny→block for nah's internal semantics.
+    Empty stdout = silent allow (FD-028). Maps protocol deny→block for readability.
     """
     raw, _ = run_hook_raw(json.dumps(input_dict))
+    if raw is None:
+        return "allow", ""
     hso = raw["hookSpecificOutput"]
     decision = hso["permissionDecision"]
     # Map protocol back to nah semantics for test readability
@@ -35,8 +42,14 @@ def run_hook(input_dict: dict) -> tuple[str, str]:
 
 
 def run_hook_cursor(input_dict: dict) -> tuple[str, str]:
-    """Run hook with Cursor-format input, return (permission, user_message)."""
+    """Run hook with Cursor-format input, return (permission, user_message).
+
+    Automatically adds cursor_version to signal Cursor agent.
+    """
+    input_dict.setdefault("cursor_version", "1.0")
     raw, _ = run_hook_raw(json.dumps(input_dict))
+    if raw is None:
+        return "allow", ""
     return raw.get("permission", ""), raw.get("user_message", "")
 
 
@@ -49,7 +62,7 @@ class TestBashIntegration:
         assert decision == "allow"
 
     def test_block_sensitive(self):
-        decision, _ = run_hook({"tool_name": "Bash", "tool_input": {"command": "cat ~/.ssh/id_rsa"}})
+        decision, _ = run_hook({"tool_name": "Bash", "tool_input": {"command": "cat ~/.netrc"}})
         assert decision == "block"
 
     def test_ask(self):
@@ -71,7 +84,7 @@ class TestNonBashIntegration:
         assert decision == "allow"
 
     def test_read_block_sensitive(self):
-        decision, _ = run_hook({"tool_name": "Read", "tool_input": {"file_path": "~/.ssh/id_rsa"}})
+        decision, _ = run_hook({"tool_name": "Read", "tool_input": {"file_path": "~/.gnupg/key"}})
         assert decision == "block"
 
     def test_write_block_hook(self):
@@ -190,28 +203,28 @@ class TestCursorIntegration:
         assert "remote code execution" in msg
 
     def test_shell_allow_safe(self):
-        """Cursor Shell with safe command → allow in Cursor format."""
-        raw, _ = run_hook_raw(json.dumps({
+        """Cursor Shell with safe command → silent allow (empty stdout)."""
+        perm, _ = run_hook_cursor({
             "tool_name": "Shell",
             "tool_input": {"command": "git status"},
-        }))
-        assert raw["permission"] == "allow"
+        })
+        assert perm == "allow"
 
-    def test_read_file_block_sensitive(self):
-        """Cursor read_file on sensitive path → block in Cursor format."""
+    def test_read_block_sensitive(self):
+        """Cursor Read on sensitive path → deny in Cursor format."""
         perm, msg = run_hook_cursor({
-            "tool_name": "read_file",
-            "tool_input": {"file_path": "~/.ssh/id_rsa"},
+            "tool_name": "Read",
+            "tool_input": {"file_path": "~/.git-credentials"},
         })
         assert perm == "deny"
 
     def test_write_to_file_allow(self):
-        """Cursor write_to_file safe content → allow."""
-        raw, _ = run_hook_raw(json.dumps({
+        """Cursor write_to_file safe content → silent allow (empty stdout)."""
+        perm, _ = run_hook_cursor({
             "tool_name": "write_to_file",
             "tool_input": {"file_path": "/tmp/test.py", "content": "x = 1"},
-        }))
-        assert raw["permission"] == "allow"
+        })
+        assert perm == "allow"
 
 
 # --- Multi-agent: Kiro ---
@@ -230,7 +243,7 @@ class TestKiroIntegration:
         """Kiro execute_bash with dangerous command → block."""
         decision, reason = run_hook({
             "tool_name": "execute_bash",
-            "tool_input": {"command": "cat ~/.ssh/id_rsa"},
+            "tool_input": {"command": "cat ~/.netrc"},
         })
         assert decision == "block"
 
@@ -238,7 +251,7 @@ class TestKiroIntegration:
         """Kiro fs_read on sensitive path → block."""
         decision, _ = run_hook({
             "tool_name": "fs_read",
-            "tool_input": {"file_path": "~/.ssh/id_rsa"},
+            "tool_input": {"file_path": "~/.gnupg/key"},
         })
         assert decision == "block"
 

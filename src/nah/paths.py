@@ -29,6 +29,10 @@ _SENSITIVE_BASENAMES: list[tuple[str, str, str]] = [
 _project_root: str | None = None
 _project_root_resolved = False
 
+# Snapshot of hardcoded defaults for reset (testing).
+_SENSITIVE_DIRS_DEFAULTS = list(_SENSITIVE_DIRS)
+_sensitive_paths_merged = False
+
 
 def resolve_path(raw: str) -> str:
     """Expand ~ and resolve to absolute canonical path."""
@@ -58,6 +62,7 @@ def is_sensitive(resolved: str) -> tuple[bool, str, str]:
 
     Returns (matched, pattern_display, policy) where policy is "ask" or "block".
     """
+    _ensure_sensitive_paths_merged()
     if not resolved:
         return False, "", ""
 
@@ -86,18 +91,46 @@ def check_path_basic(resolved: str) -> tuple[str, str] | None:
 
 
 def build_merged_sensitive_paths(config_paths: dict[str, str], config_default: str) -> None:
-    """Merge user sensitive_paths with hardcoded lists. Modifies _SENSITIVE_DIRS in place."""
-    # User config can add new sensitive paths (not remove hardcoded ones)
+    """Merge user sensitive_paths with hardcoded lists. Modifies _SENSITIVE_DIRS in place.
+
+    Global config can override hardcoded policies (e.g., ~/.ssh block -> ask).
+    """
     existing_resolved = {entry[0] for entry in _SENSITIVE_DIRS}
     for path_str, policy in config_paths.items():
         if policy not in ("ask", "block"):
             continue
         expanded = os.path.expanduser(path_str)
         resolved = os.path.realpath(expanded)
-        if resolved not in existing_resolved:
+        if resolved in existing_resolved:
+            # Override existing entry's policy
+            for i, (dir_path, display, _old_policy) in enumerate(_SENSITIVE_DIRS):
+                if dir_path == resolved:
+                    _SENSITIVE_DIRS[i] = (dir_path, display, policy)
+                    break
+        else:
             display = path_str if path_str.startswith("~") else resolved
             _SENSITIVE_DIRS.append((resolved, display, policy))
             existing_resolved.add(resolved)
+
+
+def _ensure_sensitive_paths_merged() -> None:
+    """Lazy one-time merge of config sensitive_paths into _SENSITIVE_DIRS."""
+    global _sensitive_paths_merged
+    if _sensitive_paths_merged:
+        return
+    _sensitive_paths_merged = True
+    from nah.config import get_config  # lazy import to avoid circular
+    cfg = get_config()
+    if cfg.sensitive_paths:
+        build_merged_sensitive_paths(cfg.sensitive_paths, cfg.sensitive_paths_default)
+
+
+def reset_sensitive_paths() -> None:
+    """Restore _SENSITIVE_DIRS to hardcoded defaults and clear merge flag (for testing)."""
+    global _sensitive_paths_merged
+    _sensitive_paths_merged = False
+    _SENSITIVE_DIRS.clear()
+    _SENSITIVE_DIRS.extend(_SENSITIVE_DIRS_DEFAULTS)
 
 
 def check_path(tool_name: str, raw_path: str) -> dict | None:

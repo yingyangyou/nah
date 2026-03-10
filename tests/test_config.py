@@ -1,6 +1,7 @@
 """Tests for config loading and merging (FD-006)."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -22,7 +23,8 @@ class TestDefaults:
         """Without any config files, get_config returns sensible defaults."""
         paths.set_project_root(str(tmp_path))
         reset_config()
-        cfg = get_config()
+        with patch("nah.config._GLOBAL_CONFIG", str(tmp_path / "nonexistent.yaml")):
+            cfg = get_config()
         assert isinstance(cfg, NahConfig)
         assert cfg.classify == {}
         assert cfg.actions == {}
