@@ -40,11 +40,11 @@ class TestDetectAgent:
             assert agents.detect_agent(tool) == "claude"
 
     def test_cursor_tools(self):
-        for tool in ("Shell", "read_file", "write_to_file", "edit_file", "list_dir"):
+        for tool in ("Shell", "read_file", "write_to_file", "edit_file", "list_dir", "grep"):
             assert agents.detect_agent(tool) == "cursor"
 
     def test_kiro_tools(self):
-        for tool in ("execute_bash", "fs_read", "fs_write", "fs_edit"):
+        for tool in ("execute_bash", "shell", "fs_read", "fs_write", "fs_edit"):
             assert agents.detect_agent(tool) == "kiro"
 
     def test_unknown_defaults_claude(self):

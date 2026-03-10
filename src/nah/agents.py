@@ -44,8 +44,8 @@ def normalize_tool(tool_name: str) -> str:
 # Agent detection from tool name
 # ---------------------------------------------------------------------------
 
-_CURSOR_TOOLS = {"Shell", "read_file", "write_to_file", "edit_file", "list_dir"}
-_KIRO_TOOLS = {"execute_bash", "fs_read", "fs_write", "fs_edit"}
+_CURSOR_TOOLS = {"Shell", "read_file", "write_to_file", "edit_file", "list_dir", "grep"}
+_KIRO_TOOLS = {"execute_bash", "shell", "fs_read", "fs_write", "fs_edit"}
 
 # Agent type constants
 CLAUDE = "claude"
