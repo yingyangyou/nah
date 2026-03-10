@@ -4,7 +4,6 @@ Classification data and policies are loaded from JSON files in data/.
 """
 
 import json
-import sys
 from pathlib import Path
 
 _DATA_DIR = Path(__file__).parent / "data"
