@@ -402,6 +402,16 @@ class TestFD018Regressions:
         assert r.final_decision == "allow"
         assert r.stages[0].action_type == "filesystem_read"
 
+    def test_sort_allow(self, project_root):
+        r = classify_command("sort file.txt")
+        assert r.final_decision == "allow"
+        assert r.stages[0].action_type == "filesystem_read"
+
+    def test_basename_allow(self, project_root):
+        r = classify_command("basename /foo/bar.txt")
+        assert r.final_decision == "allow"
+        assert r.stages[0].action_type == "filesystem_read"
+
     def test_env_still_unknown(self, project_root):
         """env must remain unknown (exfiltration risk)."""
         r = classify_command("env")

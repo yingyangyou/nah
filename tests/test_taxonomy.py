@@ -1144,3 +1144,62 @@ class TestSystemInfo:
     ])
     def test_system_info_is_read(self, cmd):
         assert _ct(cmd) == "filesystem_read"
+
+
+# --- FD-018: expanded coreutils ---
+
+
+class TestCoreutilsExpanded:
+    """Text processing, file info, binary inspection, compressed reading, wrappers."""
+
+    @pytest.mark.parametrize("cmd", [
+        # Text processing
+        ["sort", "file.txt"],
+        ["cut", "-d:", "-f1", "/etc/passwd"],
+        ["uniq", "-c"],
+        ["paste", "a.txt", "b.txt"],
+        ["join", "a.txt", "b.txt"],
+        ["comm", "a.txt", "b.txt"],
+        ["tr", "a-z", "A-Z"],
+        ["nl", "file.txt"],
+        ["tac", "file.txt"],
+        ["rev", "file.txt"],
+        ["fold", "-w", "80"],
+        ["fmt", "-w", "72", "file.txt"],
+        ["column", "-t"],
+        ["expand", "file.txt"],
+        ["unexpand", "file.txt"],
+        # File info & checksums
+        ["basename", "/foo/bar.txt"],
+        ["dirname", "/foo/bar.txt"],
+        ["realpath", "file.txt"],
+        ["readlink", "link"],
+        ["md5sum", "file"],
+        ["sha256sum", "file"],
+        ["sha1sum", "file"],
+        ["sha512sum", "file"],
+        ["cksum", "file"],
+        ["b2sum", "file"],
+        ["cmp", "a", "b"],
+        ["whereis", "python"],
+        # Binary inspection
+        ["od", "-x", "file"],
+        ["hexdump", "-C", "file"],
+        ["strings", "binary"],
+        # Compressed reading
+        ["zcat", "file.gz"],
+        ["zgrep", "pattern", "file.gz"],
+        ["zless", "file.gz"],
+        ["zmore", "file.gz"],
+        # Misc
+        ["getconf", "PAGE_SIZE"],
+        ["locale"],
+        ["tty"],
+        # Harmless wrappers
+        ["nice", "cmd"],
+        ["nohup", "cmd"],
+        ["timeout", "10", "cmd"],
+        ["stdbuf", "-oL", "cmd"],
+    ])
+    def test_coreutils_is_read(self, cmd):
+        assert _ct(cmd) == "filesystem_read"
