@@ -24,6 +24,9 @@ class TestNormalizeTool:
         assert agents.normalize_tool("glob") == "Glob"
         assert agents.normalize_tool("grep") == "Grep"
 
+    def test_cursor_write_to_file(self):
+        assert agents.normalize_tool("write_to_file") == "Write"
+
     def test_unknown_passthrough(self):
         assert agents.normalize_tool("UnknownTool") == "UnknownTool"
         assert agents.normalize_tool("SomeOtherThing") == "SomeOtherThing"

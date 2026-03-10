@@ -280,6 +280,42 @@ def _log_hook_decision(
         pass
 
 
+def _classify_unknown_tool(canonical: str) -> dict:
+    """Classify tools without a dedicated handler via the classify table.
+
+    MCP tools (mcp__*) skip the project classify table — only global config
+    can classify them. See FD-024 for rationale.
+    """
+    try:
+        from nah.config import get_config
+        cfg = get_config()
+
+        global_table = taxonomy.build_user_table(cfg.classify_global) if cfg.classify_global else None
+        builtin_table = taxonomy.get_builtin_table(cfg.profile)
+
+        # MCP tools: project config cannot classify (untrusted, no builtin coverage)
+        is_mcp = canonical.startswith("mcp__")
+        project_table = None
+        if not is_mcp and cfg.classify_project:
+            project_table = taxonomy.build_user_table(cfg.classify_project)
+
+        user_actions = cfg.actions or None
+    except Exception:
+        return {"decision": taxonomy.ASK, "message": f"unrecognized tool: {canonical}"}
+
+    action_type = taxonomy.classify_tokens([canonical], global_table, builtin_table, project_table)
+
+    if action_type == taxonomy.UNKNOWN:
+        return {"decision": taxonomy.ASK, "message": f"unrecognized tool: {canonical}"}
+
+    policy = taxonomy.get_policy(action_type, user_actions)
+    if policy == taxonomy.ALLOW:
+        return {"decision": taxonomy.ALLOW}
+    if policy == taxonomy.BLOCK:
+        return {"decision": taxonomy.BLOCK, "reason": f"{action_type} → {policy}"}
+    return {"decision": taxonomy.ASK, "message": f"{action_type} → {policy}"}
+
+
 def main():
     agent = agents.CLAUDE  # default until we can detect
     try:
@@ -295,7 +331,7 @@ def main():
 
         handler = HANDLERS.get(canonical)
         if handler is None:
-            decision = {"decision": taxonomy.ALLOW}
+            decision = _classify_unknown_tool(canonical)
         else:
             decision = handler(tool_input)
 

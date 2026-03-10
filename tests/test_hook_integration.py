@@ -111,7 +111,7 @@ class TestErrorHandling:
 
     def test_unknown_tool(self):
         decision, _ = run_hook({"tool_name": "UnknownTool", "tool_input": {"x": "y"}})
-        assert decision == "allow"
+        assert decision == "ask"
 
 
 # --- FD-006: Content inspection ---
@@ -278,10 +278,20 @@ class TestCursorAskEscalation:
 
 
 class TestUnknownToolIntegration:
-    def test_unknown_tool_allow(self):
-        """Unknown tool name → allow (pass through)."""
-        decision, _ = run_hook({
+    def test_unknown_tool_ask(self):
+        """Unknown tool name → ask (FD-037)."""
+        decision, reason = run_hook({
             "tool_name": "SomeUnknownTool",
             "tool_input": {"x": "y"},
         })
-        assert decision == "allow"
+        assert decision == "ask"
+        assert "unrecognized tool" in reason
+
+    def test_unknown_tool_ask_has_reason(self):
+        """Unknown tool reason contains the tool name."""
+        decision, reason = run_hook({
+            "tool_name": "WeirdTool",
+            "tool_input": {},
+        })
+        assert decision == "ask"
+        assert "WeirdTool" in reason

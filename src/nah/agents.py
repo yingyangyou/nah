@@ -20,6 +20,7 @@ TOOL_MAP: dict[str, str] = {
     "Grep": "Grep",
     # Cursor (hook-facing names; Read/Write/Grep are same as Claude)
     "Shell": "Bash",
+    "write_to_file": "Write",  # Cursor
     # Kiro CLI (snake_case names)
     "execute_bash": "Bash",
     "shell": "Bash",
@@ -148,10 +149,9 @@ AGENT_SETTINGS: dict[str, Path] = {
 
 # Agents whose config format we can auto-install into.
 # Claude/Cortex: settings.json with nested hooks format.
-# Cursor: hooks.json with flat {command, matcher} format.
-# Kiro: not yet — IDE uses .kiro.hook files, CLI uses agent JSON. Both differ enough
-#        to need further work. Kiro users can manually configure the hook command.
-INSTALLABLE_AGENTS = {CLAUDE, CORTEX, CURSOR}
+# Cursor: disabled — no ask support in hook protocol (FD-033). Code retained for future.
+# Kiro: disabled — IDE uses .kiro.hook files, CLI uses agent JSON. Needs further work.
+INSTALLABLE_AGENTS = {CLAUDE, CORTEX}
 
 # Config format groups — determines how install reads/writes the config.
 CLAUDE_FORMAT_AGENTS = {CLAUDE, CORTEX}
