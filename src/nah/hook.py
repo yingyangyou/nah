@@ -72,8 +72,45 @@ def handle_grep(tool_input: dict) -> dict:
     return {"decision": taxonomy.ALLOW}
 
 
+def _format_bash_reason(result) -> str:
+    """Build the human-readable reason string from a ClassifyResult."""
+    reason = result.reason
+    if result.composition_rule:
+        reason = f"[{result.composition_rule}] {reason}"
+    return f"Bash: {reason}"
+
+
+def _is_llm_eligible(result) -> bool:
+    """Check if an ask decision could benefit from LLM analysis."""
+    if result.composition_rule:
+        return False
+    for sr in result.stages:
+        if sr.decision != taxonomy.ASK:
+            continue
+        if sr.action_type == taxonomy.UNKNOWN:
+            return True
+        if sr.action_type == taxonomy.LANG_EXEC:
+            return True
+        if sr.default_policy == taxonomy.CONTEXT and "sensitive" not in sr.reason.lower():
+            return True
+    return False
+
+
+def _try_llm(classify_result) -> dict | None:
+    """Attempt LLM resolution. Returns decision dict or None (= keep ask)."""
+    try:
+        from nah.config import get_config
+        cfg = get_config()
+        if not cfg.llm:
+            return None
+        from nah.llm import try_llm
+        return try_llm(classify_result, cfg.llm)
+    except Exception:
+        return None
+
+
 def handle_bash(tool_input: dict) -> dict:
-    """Classify bash commands via the full structural pipeline."""
+    """Full Bash handler: structural classification -> LLM layer -> decision."""
     command = tool_input.get("command", "")
     if not command:
         return {"decision": taxonomy.ALLOW}
@@ -81,16 +118,14 @@ def handle_bash(tool_input: dict) -> dict:
     result = classify_command(command)
 
     if result.final_decision == taxonomy.BLOCK:
-        reason = result.reason
-        if result.composition_rule:
-            reason = f"[{result.composition_rule}] {reason}"
-        return {"decision": taxonomy.BLOCK, "reason": f"Bash: {reason}"}
+        return {"decision": taxonomy.BLOCK, "reason": _format_bash_reason(result)}
 
     if result.final_decision == taxonomy.ASK:
-        reason = result.reason
-        if result.composition_rule:
-            reason = f"[{result.composition_rule}] {reason}"
-        return {"decision": taxonomy.ASK, "message": f"Bash: {reason}"}
+        if _is_llm_eligible(result):
+            llm_decision = _try_llm(result)
+            if llm_decision is not None:
+                return llm_decision
+        return {"decision": taxonomy.ASK, "message": _format_bash_reason(result)}
 
     return {"decision": taxonomy.ALLOW}
 
@@ -116,6 +151,21 @@ def _to_hook_output(decision: dict, agent: str) -> dict:
     return agents.format_allow(agent)
 
 
+def _signal_kiro(decision: dict, agent: str) -> None:
+    """For Kiro CLI, signal block/ask via exit code 2 + stderr."""
+    if agent != agents.KIRO:
+        return
+    d = decision.get("decision", taxonomy.ALLOW)
+    if d in (taxonomy.BLOCK, taxonomy.ASK):
+        reason = decision.get("reason", decision.get("message", ""))
+        if d == taxonomy.BLOCK:
+            branded = f"nah. {reason}" if reason else "nah."
+        else:
+            branded = f"nah? {reason}" if reason else "nah?"
+        sys.stderr.write(branded + "\n")
+        sys.exit(2)
+
+
 def main():
     agent = agents.CLAUDE  # default until we can detect
     try:
@@ -123,24 +173,29 @@ def main():
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
 
-        agent = agents.detect_agent(tool_name)
+        agent = agents.detect_agent(data)
         canonical = agents.normalize_tool(tool_name)
 
         handler = HANDLERS.get(canonical)
         if handler is None:
-            json.dump(agents.format_allow(agent), sys.stdout)
+            decision = {"decision": taxonomy.ALLOW}
         else:
             decision = handler(tool_input)
-            json.dump(_to_hook_output(decision, agent), sys.stdout)
 
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        d = decision.get("decision", taxonomy.ALLOW)
+        if d != taxonomy.ALLOW:
+            json.dump(_to_hook_output(decision, agent), sys.stdout)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            # Kiro CLI: also signal via exit code 2 + stderr
+            _signal_kiro(decision, agent)
     except Exception as e:
         sys.stderr.write(f"nah: error: {e}\n")
         try:
             json.dump(agents.format_error(str(e), agent), sys.stdout)
             sys.stdout.write("\n")
             sys.stdout.flush()
+            _signal_kiro({"decision": taxonomy.ASK, "message": str(e)}, agent)
         except BrokenPipeError:
             pass
 

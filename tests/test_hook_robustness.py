@@ -56,12 +56,15 @@ try:
     main()
     sys.stdout = _REAL_STDOUT
     output = buf.getvalue()
-    try:
-        json.loads(output)
-        _safe_write(output)
-    except (json.JSONDecodeError, ValueError):
-        _log_error(tool_name, ValueError(f"invalid JSON from main: {{output[:200]}}"))
-        _safe_write(_ASK)
+    if not output.strip():
+        pass  # allow — write nothing to stdout
+    else:
+        try:
+            json.loads(output)
+            _safe_write(output)
+        except (json.JSONDecodeError, ValueError):
+            _log_error(tool_name, ValueError(f"invalid JSON from main: {{output[:200]}}"))
+            _safe_write(_ASK)
 except BaseException as e:
     sys.stdout = _REAL_STDOUT
     _log_error(tool_name, e)
@@ -155,7 +158,7 @@ class TestCrashLog:
         assert "test crash" in content
 
     def test_happy_path_no_log(self, tmp_path):
-        """Normal operation creates no log file."""
+        """Normal operation creates no log file. Allow = empty stdout (FD-028)."""
         log_file = str(tmp_path / "logs" / "hook-errors.log")
         # Run the real hook with valid input — should not log
         result = subprocess.run(
@@ -164,8 +167,7 @@ class TestCrashLog:
             capture_output=True, text=True,
         )
         assert result.returncode == 0
-        out = json.loads(result.stdout)
-        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert result.stdout.strip() == ""  # silent allow
         assert not os.path.exists(log_file)
 
     def test_log_rotation(self, tmp_path):

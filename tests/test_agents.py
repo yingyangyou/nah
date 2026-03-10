@@ -11,20 +11,18 @@ class TestNormalizeTool:
         for tool in ("Bash", "Read", "Write", "Edit", "Glob", "Grep"):
             assert agents.normalize_tool(tool) == tool
 
-    def test_cursor_tools(self):
+    def test_cursor_tool(self):
+        # Cursor's only unique hook tool name
         assert agents.normalize_tool("Shell") == "Bash"
-        assert agents.normalize_tool("read_file") == "Read"
-        assert agents.normalize_tool("write_to_file") == "Write"
-        assert agents.normalize_tool("edit_file") == "Edit"
-        assert agents.normalize_tool("list_dir") == "Glob"
-        assert agents.normalize_tool("grep") == "Grep"
+        # Read/Write/Grep are same name as Claude (identity mapping)
 
     def test_kiro_tools(self):
         assert agents.normalize_tool("execute_bash") == "Bash"
         assert agents.normalize_tool("shell") == "Bash"
         assert agents.normalize_tool("fs_read") == "Read"
         assert agents.normalize_tool("fs_write") == "Write"
-        assert agents.normalize_tool("fs_edit") == "Edit"
+        assert agents.normalize_tool("glob") == "Glob"
+        assert agents.normalize_tool("grep") == "Grep"
 
     def test_unknown_passthrough(self):
         assert agents.normalize_tool("UnknownTool") == "UnknownTool"
@@ -35,21 +33,54 @@ class TestNormalizeTool:
 
 
 class TestDetectAgent:
-    def test_claude_tools(self):
+    """Agent detection uses payload fields first, tool names as fallback."""
+
+    def test_claude_tools_bare(self):
+        """Bare Claude tool names → claude."""
         for tool in ("Bash", "Read", "Write", "Edit", "Glob", "Grep"):
             assert agents.detect_agent(tool) == "claude"
 
-    def test_cursor_tools(self):
-        for tool in ("Shell", "read_file", "write_to_file", "edit_file", "list_dir", "grep"):
-            assert agents.detect_agent(tool) == "cursor"
+    def test_claude_payload(self):
+        """Claude payload (no special fields) → claude."""
+        assert agents.detect_agent({"tool_name": "Bash"}) == "claude"
+        assert agents.detect_agent({"tool_name": "Read"}) == "claude"
 
-    def test_kiro_tools(self):
-        for tool in ("execute_bash", "shell", "fs_read", "fs_write", "fs_edit"):
+    def test_cursor_by_payload(self):
+        """cursor_version in payload → cursor (even for shared tool names)."""
+        assert agents.detect_agent({"tool_name": "Read", "cursor_version": "1.0"}) == "cursor"
+        assert agents.detect_agent({"tool_name": "Write", "cursor_version": "1.0"}) == "cursor"
+        assert agents.detect_agent({"tool_name": "Shell", "cursor_version": "1.0"}) == "cursor"
+
+    def test_cursor_by_tool_fallback(self):
+        """Shell (unique to Cursor) → cursor even without payload marker."""
+        assert agents.detect_agent("Shell") == "cursor"
+        assert agents.detect_agent({"tool_name": "Shell"}) == "cursor"
+
+    def test_kiro_by_payload(self):
+        """hook_event_name (without cursor_version) → kiro."""
+        assert agents.detect_agent({"tool_name": "execute_bash", "hook_event_name": "preToolUse"}) == "kiro"
+        assert agents.detect_agent({"tool_name": "fs_read", "hook_event_name": "preToolUse"}) == "kiro"
+
+    def test_kiro_by_tool_fallback(self):
+        """Kiro-specific tool names → kiro even without payload marker."""
+        for tool in ("execute_bash", "shell", "fs_read", "fs_write", "glob", "grep"):
             assert agents.detect_agent(tool) == "kiro"
 
     def test_unknown_defaults_claude(self):
         assert agents.detect_agent("UnknownTool") == "claude"
         assert agents.detect_agent("") == "claude"
+        assert agents.detect_agent({"tool_name": "UnknownTool"}) == "claude"
+
+    def test_cursor_beats_kiro_with_both_fields(self):
+        """cursor_version takes priority over hook_event_name."""
+        data = {"tool_name": "Shell", "cursor_version": "1.0", "hook_event_name": "preToolUse"}
+        assert agents.detect_agent(data) == "cursor"
+
+    def test_shared_tool_without_payload_is_claude(self):
+        """Read/Write/Grep without payload markers → claude (safe default)."""
+        assert agents.detect_agent("Read") == "claude"
+        assert agents.detect_agent("Write") == "claude"
+        assert agents.detect_agent("Grep") == "claude"
 
 
 # --- Output formatting ---

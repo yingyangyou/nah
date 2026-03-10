@@ -1,7 +1,7 @@
 """Multi-agent support — tool name mapping, agent detection, output formatting.
 
 Supports Claude Code, Cortex Code, Cursor, and Kiro CLI. The hook script
-auto-detects the calling agent from the tool name and formats output accordingly.
+auto-detects the calling agent from payload fields and formats output accordingly.
 """
 
 from pathlib import Path
@@ -11,27 +11,22 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 TOOL_MAP: dict[str, str] = {
-    # Claude Code / Cortex Code (canonical)
+    # Claude Code / Cortex Code (canonical — identity mapping)
     "Bash": "Bash",
     "Read": "Read",
     "Write": "Write",
     "Edit": "Edit",
     "Glob": "Glob",
     "Grep": "Grep",
-    # Cursor
+    # Cursor (hook-facing names; Read/Write/Grep are same as Claude)
     "Shell": "Bash",
-    "read_file": "Read",
-    "write_to_file": "Write",
-    "edit_file": "Edit",
-    "list_dir": "Glob",
-    # Note: Cursor's "grep" (lowercase) vs Claude's "Grep" (PascalCase)
-    "grep": "Grep",
-    # Kiro CLI
+    # Kiro CLI (snake_case names)
     "execute_bash": "Bash",
     "shell": "Bash",
     "fs_read": "Read",
     "fs_write": "Write",
-    "fs_edit": "Edit",
+    "glob": "Glob",
+    "grep": "Grep",
 }
 
 
@@ -41,11 +36,12 @@ def normalize_tool(tool_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Agent detection from tool name
+# Agent detection
 # ---------------------------------------------------------------------------
 
-_CURSOR_TOOLS = {"Shell", "read_file", "write_to_file", "edit_file", "list_dir", "grep"}
-_KIRO_TOOLS = {"execute_bash", "shell", "fs_read", "fs_write", "fs_edit"}
+# Tool names unique to each agent (used as fallback when no payload markers).
+_CURSOR_TOOLS = {"Shell"}
+_KIRO_TOOLS = {"execute_bash", "shell", "fs_read", "fs_write", "glob", "grep"}
 
 # Agent type constants
 CLAUDE = "claude"
@@ -54,12 +50,23 @@ CURSOR = "cursor"
 KIRO = "kiro"
 
 
-def detect_agent(tool_name: str) -> str:
-    """Detect which agent is calling based on tool name.
+def detect_agent(data) -> str:
+    """Detect which agent is calling.
 
-    Claude and Cortex use the same tool names and output format, so both
-    return 'claude'. Cursor and Kiro have distinct tool names.
+    Accepts either a full payload dict or a bare tool name string.
+    Uses payload fields for reliable detection (cursor_version, hook_event_name),
+    falls back to tool name heuristics for bare strings and unknown payloads.
     """
+    if isinstance(data, str):
+        data = {"tool_name": data}
+    # Cursor sends cursor_version in every hook payload
+    if "cursor_version" in data:
+        return CURSOR
+    # Kiro CLI sends hook_event_name (Cursor does too, but caught above)
+    if "hook_event_name" in data:
+        return KIRO
+    # Fallback: detect from tool name alone
+    tool_name = data.get("tool_name", "")
     if tool_name in _CURSOR_TOOLS:
         return CURSOR
     if tool_name in _KIRO_TOOLS:
@@ -122,23 +129,30 @@ def format_error(error: str, agent: str) -> dict:
 AGENT_TOOL_MATCHERS: dict[str, list[str]] = {
     CLAUDE: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
     CORTEX: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
-    CURSOR: ["Shell", "read_file", "write_to_file", "edit_file", "list_dir", "grep"],
-    KIRO: ["execute_bash", "shell", "fs_read", "fs_write", "fs_edit"],
+    CURSOR: ["Shell", "Read", "Write", "Grep"],
 }
 
-# Settings file paths per agent.
+# Settings/hooks file paths per agent.
 AGENT_SETTINGS: dict[str, Path] = {
     CLAUDE: Path.home() / ".claude" / "settings.json",
     CORTEX: Path.home() / ".cortex" / "settings.json",
+    CURSOR: Path.home() / ".cursor" / "hooks.json",
 }
 
-# Agents that use the same settings.json format as Claude Code.
-# Cursor and Kiro have different config formats — not yet supported for auto-install.
-INSTALLABLE_AGENTS = {CLAUDE, CORTEX}
+# Agents whose config format we can auto-install into.
+# Claude/Cortex: settings.json with nested hooks format.
+# Cursor: hooks.json with flat {command, matcher} format.
+# Kiro: not yet — IDE uses .kiro.hook files, CLI uses agent JSON. Both differ enough
+#        to need further work. Kiro users can manually configure the hook command.
+INSTALLABLE_AGENTS = {CLAUDE, CORTEX, CURSOR}
+
+# Config format groups — determines how install reads/writes the config.
+CLAUDE_FORMAT_AGENTS = {CLAUDE, CORTEX}
+CURSOR_FORMAT_AGENTS = {CURSOR}
 
 AGENT_NAMES: dict[str, str] = {
     CLAUDE: "Claude Code",
     CORTEX: "Cortex Code",
     CURSOR: "Cursor",
-    KIRO: "Kiro CLI",
+    KIRO: "Kiro",
 }
