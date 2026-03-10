@@ -4,6 +4,7 @@ Classification data and policies are loaded from JSON files in data/.
 """
 
 import json
+import sys
 from pathlib import Path
 
 _DATA_DIR = Path(__file__).parent / "data"
@@ -33,14 +34,20 @@ ASK = "ask"
 BLOCK = "block"
 CONTEXT = "context"
 
+# Valid profiles.
+PROFILES = ("full", "minimal", "none")
+
 # Strictness ordering — higher = more restrictive. Used for tighten-only merges.
 STRICTNESS = {ALLOW: 0, CONTEXT: 1, ASK: 2, BLOCK: 3}
 
 
-def _load_classify_table() -> list[tuple[tuple[str, ...], str]]:
-    """Load classify table from data/classify/*.json files."""
+def _load_classify_table(profile: str = "full") -> list[tuple[tuple[str, ...], str]]:
+    """Load classify table from JSON files for the given profile."""
+    if profile == "none":
+        return []
+    subdir = "classify_minimal" if profile == "minimal" else "classify_full"
+    classify_dir = _DATA_DIR / subdir
     table: list[tuple[tuple[str, ...], str]] = []
-    classify_dir = _DATA_DIR / "classify"
     for json_file in classify_dir.glob("*.json"):
         action_type = json_file.stem  # e.g. "git_safe" from "git_safe.json"
         with open(json_file) as f:
@@ -57,9 +64,32 @@ def _load_policies() -> dict[str, str]:
         return json.load(f)
 
 
-# Built at module load — one-time cost.
-_CLASSIFY_TABLE = _load_classify_table()
+# Cached built-in tables keyed by profile name.
+_BUILTIN_TABLES: dict[str, list[tuple[tuple[str, ...], str]]] = {}
 _POLICIES = _load_policies()
+
+# Pre-load full profile at module level (most common path).
+_BUILTIN_TABLES["full"] = _load_classify_table("full")
+
+
+def get_builtin_table(profile: str = "full") -> list[tuple[tuple[str, ...], str]]:
+    """Get cached built-in classify table for a profile."""
+    if profile not in _BUILTIN_TABLES:
+        _BUILTIN_TABLES[profile] = _load_classify_table(profile)
+    return _BUILTIN_TABLES[profile]
+
+
+def build_user_table(user_classify: dict[str, list[str]]) -> list[tuple[tuple[str, ...], str]]:
+    """Build a sorted classify table from user config entries."""
+    table: list[tuple[tuple[str, ...], str]] = []
+    for action_type, prefixes in user_classify.items():
+        if not isinstance(prefixes, list):
+            continue
+        for prefix_str in prefixes:
+            table.append((tuple(prefix_str.split()), action_type))
+    table.sort(key=lambda entry: len(entry[0]), reverse=True)
+    return table
+
 
 # Shell wrappers that need unwrapping.
 _SHELL_WRAPPERS = {"bash", "sh", "dash", "zsh"}
@@ -75,19 +105,25 @@ DECODE_COMMANDS: list[tuple[str, str | None]] = [
 ]
 
 
-def build_merged_classify_table(user_classify: dict[str, list[str]]) -> list[tuple[tuple[str, ...], str]]:
-    """Merge user classify entries with built-in table. Sorted longest-first."""
-    merged = list(_CLASSIFY_TABLE)
-    for action_type, prefixes in user_classify.items():
-        for prefix_str in prefixes:
-            prefix_tuple = tuple(prefix_str.split())
-            merged.append((prefix_tuple, action_type))
-    merged.sort(key=lambda entry: len(entry[0]), reverse=True)
-    return merged
+def _prefix_match(tokens: list[str], table: list[tuple[tuple[str, ...], str]]) -> str:
+    """First prefix match in a single sorted table. Returns action type or UNKNOWN."""
+    for prefix, action_type in table:
+        if len(tokens) >= len(prefix) and tuple(tokens[:len(prefix)]) == prefix:
+            return action_type
+    return UNKNOWN
 
 
-def classify_tokens(tokens: list[str], classify_table: list | None = None) -> str:
-    """Classify command tokens by prefix match (longest wins). Returns action type."""
+def classify_tokens(
+    tokens: list[str],
+    global_table: list | None = None,
+    builtin_table: list | None = None,
+    project_table: list | None = None,
+) -> str:
+    """Classify command tokens via three-table priority lookup.
+
+    Priority: global (trusted) → built-in (curated) → project (untrusted).
+    First match wins with early return — project can only fill gaps.
+    """
     if not tokens:
         return UNKNOWN
 
@@ -103,12 +139,16 @@ def classify_tokens(tokens: list[str], classify_table: list | None = None) -> st
         if action is not None:
             return action
 
-    table = classify_table if classify_table is not None else _CLASSIFY_TABLE
+    # Three-table lookup: global (trusted) → built-in → project (untrusted)
+    for table in (global_table, builtin_table, project_table):
+        if table:
+            result = _prefix_match(tokens, table)
+            if result != UNKNOWN:
+                return result
 
-    # Prefix match: iterate sorted table, first (longest) match wins.
-    for prefix, action_type in table:
-        if len(tokens) >= len(prefix) and tuple(tokens[:len(prefix)]) == prefix:
-            return action_type
+    # Fallback: use full built-in table if no tables were provided
+    if global_table is None and builtin_table is None and project_table is None:
+        return _prefix_match(tokens, get_builtin_table("full"))
 
     return UNKNOWN
 

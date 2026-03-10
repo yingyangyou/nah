@@ -26,7 +26,9 @@ class TestDefaults:
         with patch("nah.config._GLOBAL_CONFIG", str(tmp_path / "nonexistent.yaml")):
             cfg = get_config()
         assert isinstance(cfg, NahConfig)
-        assert cfg.classify == {}
+        assert cfg.profile == "full"
+        assert cfg.classify_global == {}
+        assert cfg.classify_project == {}
         assert cfg.actions == {}
         assert cfg.sensitive_paths_default == "ask"
         assert cfg.sensitive_paths == {}
@@ -82,23 +84,17 @@ class TestMergeConfigs:
 
     def test_empty_merge(self):
         cfg = _merge_configs({}, {})
-        assert cfg.classify == {}
+        assert cfg.classify_global == {}
+        assert cfg.classify_project == {}
         assert cfg.actions == {}
 
-    def test_classify_union(self):
-        """Project extends global classify entries."""
+    def test_classify_kept_separate(self):
+        """Global and project classify are stored separately, not unioned."""
         global_cfg = {"classify": {"package_run": ["just build"]}}
         project_cfg = {"classify": {"package_run": ["task dev"]}}
         cfg = _merge_configs(global_cfg, project_cfg)
-        assert "just build" in cfg.classify["package_run"]
-        assert "task dev" in cfg.classify["package_run"]
-
-    def test_classify_dedup(self):
-        """Duplicate entries are deduped."""
-        global_cfg = {"classify": {"package_run": ["just build"]}}
-        project_cfg = {"classify": {"package_run": ["just build", "task dev"]}}
-        cfg = _merge_configs(global_cfg, project_cfg)
-        assert cfg.classify["package_run"].count("just build") == 1
+        assert cfg.classify_global == {"package_run": ["just build"]}
+        assert cfg.classify_project == {"package_run": ["task dev"]}
 
     def test_actions_tighten_only(self):
         """Project can tighten actions but not loosen."""
@@ -232,3 +228,34 @@ class TestSensitivePathsDefault:
             {"sensitive_paths_default": "ask"},
         )
         assert cfg.sensitive_paths_default == "block"
+
+
+class TestProfile:
+    """Profile loading and validation."""
+
+    def test_profile_from_global(self):
+        cfg = _merge_configs({"profile": "minimal"}, {})
+        assert cfg.profile == "minimal"
+
+    def test_profile_none(self):
+        cfg = _merge_configs({"profile": "none"}, {})
+        assert cfg.profile == "none"
+
+    def test_profile_default_full(self):
+        cfg = _merge_configs({}, {})
+        assert cfg.profile == "full"
+
+    def test_profile_ignored_in_project(self):
+        """Project config cannot set the profile."""
+        cfg = _merge_configs({}, {"profile": "none"})
+        assert cfg.profile == "full"
+
+    def test_profile_invalid_fallback(self):
+        """Invalid profile falls back to 'full'."""
+        cfg = _merge_configs({"profile": "turbo"}, {})
+        assert cfg.profile == "full"
+
+    def test_profile_global_overrides_project(self):
+        """Global profile wins; project profile ignored."""
+        cfg = _merge_configs({"profile": "minimal"}, {"profile": "none"})
+        assert cfg.profile == "minimal"

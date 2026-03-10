@@ -3,7 +3,9 @@
 import pytest
 
 from nah.taxonomy import (
+    build_user_table,
     classify_tokens,
+    get_builtin_table,
     get_policy,
     is_decode_stage,
     is_exec_sink,
@@ -842,3 +844,144 @@ class TestGhCommands:
     ])
     def test_gh_lang_exec(self, tokens):
         assert classify_tokens(tokens) == "lang_exec"
+
+
+# --- Profiles (FD-032) ---
+
+
+class TestProfiles:
+    """Built-in classify table loading by profile."""
+
+    def test_profile_full_loads_all(self):
+        table = get_builtin_table("full")
+        action_types = {at for _, at in table}
+        # Full profile has tool-specific types absent from minimal
+        assert "container_destructive" in action_types
+        assert "lang_exec" in action_types
+        assert "package_install" in action_types
+        assert "sql_write" in action_types
+
+    def test_profile_minimal_subset(self):
+        table = get_builtin_table("minimal")
+        action_types = {at for _, at in table}
+        # Minimal has core types
+        assert "filesystem_delete" in action_types
+        assert "filesystem_read" in action_types
+        assert "filesystem_write" in action_types
+        assert "git_safe" in action_types
+        assert "network_outbound" in action_types
+        assert "process_signal" in action_types
+        # Minimal does NOT have tool-specific types
+        assert "container_destructive" not in action_types
+        assert "lang_exec" not in action_types
+        assert "package_install" not in action_types
+        assert "package_run" not in action_types
+        assert "sql_write" not in action_types
+
+    def test_profile_none_empty(self):
+        table = get_builtin_table("none")
+        assert table == []
+
+    def test_profile_minimal_smaller_than_full(self):
+        full = get_builtin_table("full")
+        minimal = get_builtin_table("minimal")
+        assert len(minimal) < len(full)
+
+    def test_profile_minimal_docker_unknown(self):
+        """Docker commands are not classified in minimal profile."""
+        table = get_builtin_table("minimal")
+        assert classify_tokens(["docker", "rm", "x"], builtin_table=table) == "unknown"
+
+    def test_profile_minimal_rm_still_classified(self):
+        """Core commands are classified in minimal profile."""
+        table = get_builtin_table("minimal")
+        assert classify_tokens(["rm", "file"], builtin_table=table) == "filesystem_delete"
+
+    def test_profile_minimal_curl_still_classified(self):
+        table = get_builtin_table("minimal")
+        assert classify_tokens(["curl", "example.com"], builtin_table=table) == "network_outbound"
+
+    def test_profile_none_everything_unknown(self):
+        """With none profile, all commands are unknown."""
+        table = get_builtin_table("none")
+        assert classify_tokens(["rm", "-rf", "/"], builtin_table=table) == "unknown"
+        assert classify_tokens(["git", "status"], builtin_table=table) == "unknown"
+        assert classify_tokens(["curl", "x"], builtin_table=table) == "unknown"
+
+    def test_profile_none_find_still_works(self):
+        """Special classifiers (find) work regardless of profile."""
+        table = get_builtin_table("none")
+        assert classify_tokens(["find", ".", "-name", "*.py"], builtin_table=table) == "filesystem_read"
+        assert classify_tokens(["find", ".", "-delete"], builtin_table=table) == "filesystem_delete"
+
+    def test_profile_none_git_special_still_works(self):
+        """Flag-dependent git classifiers work regardless of profile."""
+        table = get_builtin_table("none")
+        assert classify_tokens(["git", "push", "--force"], builtin_table=table) == "git_history_rewrite"
+        assert classify_tokens(["git", "reset", "--hard"], builtin_table=table) == "git_discard"
+
+
+# --- Three-table lookup (FD-032) ---
+
+
+class TestThreeTableLookup:
+    """Three-table priority: global → built-in → project."""
+
+    def test_global_wins_over_builtin(self):
+        """Global user entry overrides built-in classification."""
+        global_t = build_user_table({"package_run": ["docker rm"]})
+        builtin_t = get_builtin_table("full")
+        result = classify_tokens(["docker", "rm", "x"], global_t, builtin_t, None)
+        assert result == "package_run"  # global wins over container_destructive
+
+    def test_builtin_wins_over_project(self):
+        """Built-in beats project even with longer prefix (supply-chain safety)."""
+        builtin_t = get_builtin_table("full")
+        project_t = build_user_table({"filesystem_read": ["rm -rf"]})
+        result = classify_tokens(["rm", "-rf", "foo"], None, builtin_t, project_t)
+        assert result == "filesystem_delete"  # built-in "rm" wins, project "rm -rf" ignored
+
+    def test_project_fills_gaps(self):
+        """Project entries work for commands with no built-in match."""
+        builtin_t = get_builtin_table("full")
+        project_t = build_user_table({"my_deploys": ["my-tool deploy"]})
+        result = classify_tokens(["my-tool", "deploy", "prod"], None, builtin_t, project_t)
+        assert result == "my_deploys"
+
+    def test_global_fills_gaps(self):
+        """Global entries also work for unclassified commands."""
+        global_t = build_user_table({"my_safe": ["terraform plan"]})
+        builtin_t = get_builtin_table("full")
+        result = classify_tokens(["terraform", "plan"], global_t, builtin_t, None)
+        assert result == "my_safe"
+
+    def test_no_tables_falls_back_to_full(self):
+        """No tables provided → uses full built-in table (backward compat)."""
+        assert classify_tokens(["rm", "file"]) == "filesystem_delete"
+        assert classify_tokens(["docker", "rm", "x"]) == "container_destructive"
+
+    def test_supply_chain_reclassify_blocked(self):
+        """Project can't reclassify rm to bypass filesystem_delete policy."""
+        builtin_t = get_builtin_table("full")
+        # Malicious project tries to reclassify rm variants as safe
+        project_t = build_user_table({
+            "filesystem_read": ["rm -rf", "rm -f", "rmdir --ignore"],
+        })
+        # All still match built-in "rm" / "rmdir" first
+        assert classify_tokens(["rm", "-rf", "/"], None, builtin_t, project_t) == "filesystem_delete"
+        assert classify_tokens(["rm", "-f", "file"], None, builtin_t, project_t) == "filesystem_delete"
+        assert classify_tokens(["rmdir", "--ignore", "dir"], None, builtin_t, project_t) == "filesystem_delete"
+
+    def test_project_with_minimal_profile(self):
+        """Project fills gaps in minimal profile."""
+        builtin_t = get_builtin_table("minimal")
+        project_t = build_user_table({"my_docker": ["docker rm"]})
+        # docker rm is unknown in minimal, project fills the gap
+        assert classify_tokens(["docker", "rm", "x"], None, builtin_t, project_t) == "my_docker"
+
+    def test_global_override_with_minimal_profile(self):
+        """Global can reclassify even in minimal profile."""
+        global_t = build_user_table({"my_safe_rm": ["rm"]})
+        builtin_t = get_builtin_table("minimal")
+        # Global "rm" wins over minimal built-in "rm → filesystem_delete"
+        assert classify_tokens(["rm", "file"], global_t, builtin_t, None) == "my_safe_rm"

@@ -191,25 +191,25 @@ class TestApplyPolicy:
 class TestUnwrapShell:
     def test_not_a_wrapper(self):
         stage = Stage(tokens=["ls", "-la"])
-        result = _unwrap_shell(stage, 0, None, None)
+        result = _unwrap_shell(stage, 0, global_table=None, builtin_table=None, project_table=None, user_actions=None)
         assert result is None
 
     def test_bash_c_unwraps(self):
         stage = Stage(tokens=["bash", "-c", "git status"])
-        result = _unwrap_shell(stage, 0, None, None)
+        result = _unwrap_shell(stage, 0, global_table=None, builtin_table=None, project_table=None, user_actions=None)
         assert result is not None
         assert result.action_type == taxonomy.GIT_SAFE
 
     def test_excessive_depth(self):
         stage = Stage(tokens=["bash", "-c", "ls"])
-        result = _unwrap_shell(stage, 5, None, None)
+        result = _unwrap_shell(stage, 5, global_table=None, builtin_table=None, project_table=None, user_actions=None)
         assert result is not None
         assert result.action_type == taxonomy.OBFUSCATED
         assert "excessive" in result.reason
 
     def test_eval_command_substitution(self):
         stage = Stage(tokens=["eval", "$(cat script.sh)"])
-        result = _unwrap_shell(stage, 0, None, None)
+        result = _unwrap_shell(stage, 0, global_table=None, builtin_table=None, project_table=None, user_actions=None)
         assert result is not None
         assert result.action_type == taxonomy.OBFUSCATED
 

@@ -4,7 +4,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-from nah.taxonomy import STRICTNESS as _STRICTNESS
+from nah.taxonomy import PROFILES as _PROFILES, STRICTNESS as _STRICTNESS
 
 _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "nah")
 _GLOBAL_CONFIG = os.path.join(_CONFIG_DIR, "config.yaml")
@@ -13,7 +13,9 @@ _PROJECT_CONFIG_NAME = ".nah.yaml"
 
 @dataclass
 class NahConfig:
-    classify: dict[str, list[str]] = field(default_factory=dict)
+    profile: str = "full"
+    classify_global: dict[str, list[str]] = field(default_factory=dict)
+    classify_project: dict[str, list[str]] = field(default_factory=dict)
     actions: dict[str, str] = field(default_factory=dict)
     sensitive_paths_default: str = "ask"
     sensitive_paths: dict[str, str] = field(default_factory=dict)
@@ -21,6 +23,7 @@ class NahConfig:
     known_registries: list[str] = field(default_factory=list)
     llm: dict = field(default_factory=dict)
     ask_fallback: str = "deny"
+    log: dict = field(default_factory=dict)
 
 
 _cached_config: NahConfig | None = None
@@ -100,11 +103,16 @@ def _merge_configs(global_cfg: dict, project_cfg: dict) -> NahConfig:
     """Merge global and project configs with security rules."""
     config = NahConfig()
 
-    # classify: union per key
-    g_classify = _validate_dict(global_cfg.get("classify", {}))
-    p_classify = _validate_dict(project_cfg.get("classify", {}))
-    for key in set(g_classify) | set(p_classify):
-        config.classify[key] = _merge_list_union(g_classify.get(key, []), p_classify.get(key, []))
+    # profile: global config ONLY, validated
+    profile = global_cfg.get("profile", "full")
+    if profile not in _PROFILES:
+        sys.stderr.write(f"nah: unknown profile '{profile}', using 'full'\n")
+        profile = "full"
+    config.profile = profile
+
+    # classify: keep global and project SEPARATE for three-table lookup
+    config.classify_global = _validate_dict(global_cfg.get("classify", {}))
+    config.classify_project = _validate_dict(project_cfg.get("classify", {}))
 
     # actions: tighten only
     config.actions = _merge_dict_tighten(
@@ -143,6 +151,9 @@ def _merge_configs(global_cfg: dict, project_cfg: dict) -> NahConfig:
     # ask_fallback: global config ONLY
     raw_fallback = global_cfg.get("ask_fallback", "deny")
     config.ask_fallback = raw_fallback if raw_fallback in ("deny", "allow") else "deny"
+
+    # log: global config ONLY — project .nah.yaml silently ignored
+    config.log = _validate_dict(global_cfg.get("log", {}))
 
     return config
 
