@@ -270,8 +270,8 @@ class TestLlmMaxDecision:
 
     def test_llm_max_decision_invalid_ignored(self):
         cfg = _merge_configs({"llm": {"max_decision": "turbo"}}, {})
-        assert cfg.llm_max_decision == ""
+        assert cfg.llm_max_decision == "ask"  # keeps default
 
-    def test_llm_max_decision_default_empty(self):
+    def test_llm_max_decision_default_ask(self):
         cfg = _merge_configs({}, {})
-        assert cfg.llm_max_decision == ""
+        assert cfg.llm_max_decision == "ask"

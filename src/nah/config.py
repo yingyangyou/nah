@@ -22,7 +22,7 @@ class NahConfig:
     allow_paths: dict[str, list[str]] = field(default_factory=dict)
     known_registries: list[str] = field(default_factory=list)
     llm: dict = field(default_factory=dict)
-    llm_max_decision: str = ""  # empty = no cap
+    llm_max_decision: str = "ask"  # default: LLM can't escalate past ask
     ask_fallback: str = "deny"
     log: dict = field(default_factory=dict)
 

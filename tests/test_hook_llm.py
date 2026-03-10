@@ -108,13 +108,14 @@ class TestHandleBashLlm:
         mock_urlopen.assert_called_once()
 
     @patch("nah.llm.urllib.request.urlopen")
-    def test_unknown_command_llm_blocks(self, mock_urlopen, project_root):
+    def test_unknown_command_llm_blocks_capped_to_ask(self, mock_urlopen, project_root):
+        """Default max_decision=ask caps LLM block to ask."""
         _set_llm_config(_ollama_config())
         mock_urlopen.return_value = _mock_ollama_response("block", "dangerous").return_value
 
         result = handle_bash({"command": "somethingunknown123"})
-        assert result["decision"] == "block"
-        assert "LLM" in result["reason"]
+        assert result["decision"] == "ask"
+        assert "LLM suggested block" in result.get("message", "")
 
     @patch("nah.llm.urllib.request.urlopen")
     def test_unknown_command_llm_uncertain(self, mock_urlopen, project_root):
@@ -280,9 +281,23 @@ class TestLlmMaxDecisionCap:
         assert result["decision"] == "allow"
 
     @patch("nah.llm.urllib.request.urlopen")
-    def test_llm_no_cap_default(self, mock_urlopen, project_root):
-        """No max_decision → LLM block passes through."""
+    def test_llm_no_cap_default_caps_to_ask(self, mock_urlopen, project_root):
+        """Default max_decision=ask → LLM block is capped to ask."""
         _set_llm_config(_ollama_config())
+
+        mock_urlopen.return_value = _mock_ollama_response("block", "dangerous").return_value
+
+        result = handle_bash({"command": "somethingunknown123"})
+        assert result["decision"] == "ask"
+        assert "LLM suggested block" in result.get("message", "")
+
+    @patch("nah.llm.urllib.request.urlopen")
+    def test_llm_block_uncapped_when_configured(self, mock_urlopen, project_root):
+        """Explicit max_decision=block → LLM block passes through."""
+        llm_cfg = _ollama_config()
+        llm_cfg["max_decision"] = "block"
+        _set_llm_config(llm_cfg)
+        config._cached_config.llm_max_decision = "block"
 
         mock_urlopen.return_value = _mock_ollama_response("block", "dangerous").return_value
 
