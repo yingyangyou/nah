@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ask decisions no longer shown as "hook error" — `detect_agent()` misidentified Claude Code as Kiro via `hook_event_name` payload field, triggering `sys.exit(2)` (FD-029)
 
 - Allow decisions no longer bypass Claude Code's permission system — silent passthrough (empty stdout) lets acceptEdits and other permission modes work correctly (FD-028)
+- `nah test` no longer crashes on LLM-eligible commands — fixed `LLMCallResult` dict subscript error, added provider/model/latency display (FD-038)
+- `nah log` now shows LLM provider and model in default view, handles both legacy `llm_backend` and current `llm_provider` fields (FD-038)
 
 ### Removed
 
