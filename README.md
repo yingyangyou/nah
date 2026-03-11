@@ -12,6 +12,7 @@
   <a href="#what-it-guards">What it guards</a> &bull;
   <a href="#how-it-works">How it works</a> &bull;
   <a href="#configure">Configure</a> &bull;
+  <a href="#cli">CLI</a> &bull;
   <a href="#auto-mode">Works with Auto Mode</a>
 </p>
 
@@ -32,6 +33,14 @@ nah install
 
 That's it. Two commands. Zero config required — sensible defaults out of the box.
 
+Also supports Cortex Code:
+
+```bash
+nah install                    # Claude Code (default)
+nah install --agent cortex     # Cortex Code
+nah install --agent all        # both
+```
+
 ## What it guards
 
 nah is a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) that intercepts **every** tool call before it executes:
@@ -40,14 +49,15 @@ nah is a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks)
 |------|----------------|
 | **Bash** | Structural command classification — action type, pipe composition, shell unwrapping |
 | **Read** | Sensitive path detection (`~/.ssh`, `~/.aws`, `.env`, ...) |
-| **Write** | Path check + content inspection before anything hits disk |
+| **Write** | Path check + content inspection (secrets, exfiltration, destructive payloads) |
 | **Edit** | Path check + content inspection on the replacement string |
 | **Glob** | Guards directory scanning of sensitive locations |
 | **Grep** | Catches credential search patterns outside the project |
+| **MCP tools** | Generic classification for third-party tool servers (`mcp__*`) |
 
 ## How it works
 
-Every tool call gets a deterministic verdict in under 5ms. Zero tokens. Zero cost.
+Every tool call hits a deterministic structural classifier first. Under 5ms. Zero tokens.
 
 ```
 Claude: Edit → ~/.claude/hooks/nah_guard.py
@@ -76,40 +86,125 @@ The same command gets different decisions based on context:
 | `git push --force` | History rewrite | Ask |
 | `base64 -d \| bash` | Decode + exec pipe | Block |
 
+### Optional LLM layer
+
+For commands the structural classifier can't resolve (the ambiguous 10-20%), nah can optionally consult an LLM:
+
+```
+Tool call → nah (deterministic, <5ms) → LLM (optional) → Claude Code permissions → execute
+```
+
+The deterministic layer always runs first — the LLM only resolves leftover "ask" decisions. If no LLM is configured or available, the decision stays "ask" and the user is prompted.
+
+Supported providers: Ollama (free, local), OpenRouter, OpenAI, Anthropic, Cortex.
+
 ## Configure
 
 Works out of the box with zero config. When you want to tune it:
 
 ```yaml
 # ~/.config/nah/config.yaml  (global)
-# .nah.yaml                  (per-project)
+# .nah.yaml                  (per-project, can only tighten)
 
+# Override default policies for action types
 actions:
-  filesystem_delete: context     # check path before deciding
-  git_history_rewrite: ask       # always confirm
-  network_outbound: ask          # always confirm
-  obfuscated: block              # always block
+  filesystem_delete: ask         # always confirm deletes
+  git_history_rewrite: block     # never allow force push
+  lang_exec: allow               # trust inline scripts
 
+# Guard sensitive directories
 sensitive_paths:
   ~/.kube: ask
   ~/Documents/taxes: block
 
+# Teach nah about your commands
 classify:
-  database_destructive:          # add your own action types
+  database_destructive:
     - "psql -c DROP"
     - "mysql -e DROP"
 ```
 
-nah classifies commands by **action type** (what kind of thing), not by command name (which command). The taxonomy is extensible — add commands, create new action types, reclassify anything you disagree with.
+nah classifies commands by **action type** (what kind of thing), not by command name (which command). Run `nah types` to see all 17 built-in action types with their default policies.
+
+### Action types
+
+Every command maps to an action type, and every action type has a default policy:
+
+| Policy | Meaning | Example types |
+|--------|---------|---------------|
+| `allow` | Always permit | `filesystem_read`, `git_safe`, `package_run` |
+| `context` | Check path/project context, then decide | `filesystem_write`, `filesystem_delete`, `network_outbound` |
+| `ask` | Always prompt the user | `git_history_rewrite`, `lang_exec`, `process_signal` |
+| `block` | Always reject | `obfuscated` |
+
+### Taxonomy profiles
+
+Choose how much built-in classification to start with:
+
+```yaml
+# ~/.config/nah/config.yaml
+profile: full      # full | minimal | none
+```
+
+- **full** (default) — comprehensive coverage across shell, git, packages, containers, and more
+- **minimal** — curated essentials only (rm, git, curl, kill, ...)
+- **none** — blank slate — bring your own taxonomy
+
+### LLM configuration
+
+```yaml
+# ~/.config/nah/config.yaml
+llm:
+  enabled: true
+  max_decision: ask              # cap: LLM can't escalate past "ask"
+  providers: [openrouter]        # cascade order
+  openrouter:
+    url: https://openrouter.ai/api/v1/chat/completions
+    key_env: OPENROUTER_API_KEY
+    model: google/gemini-3.1-flash-lite-preview
+```
+
+### Supply-chain safety
+
+Project `.nah.yaml` can **add** classifications and **tighten** policies, but can never relax them. A malicious repo can't use `.nah.yaml` to whitelist dangerous commands — only your global config has that power.
 
 ## CLI
 
+### Core
+
 ```bash
-nah install       # install hook into Claude Code
-nah uninstall     # clean removal
-nah update        # update hook after pip upgrade
-nah test "rm -rf /" # dry-run — see how nah would classify a command
-nah config show   # show effective merged config
+nah install                # install hook (supports --agent claude|cortex|all)
+nah uninstall              # clean removal
+nah update                 # update hook after pip upgrade
+nah config show            # show effective merged config
+nah config path            # show config file locations
+```
+
+### Test & inspect
+
+```bash
+nah test "rm -rf /"              # dry-run Bash classification
+nah test --tool Read ~/.ssh/id_rsa   # test any tool, not just Bash
+nah test --tool Write ./out.txt      # test Write with content inspection
+nah types                        # list all action types with default policies
+nah log                          # show recent hook decisions
+nah log --blocks                 # show only blocked decisions
+nah log --tool Bash -n 20        # filter by tool, limit entries
+nah log --json                   # machine-readable output
+```
+
+### Manage rules
+
+Adjust policies from the command line — no need to edit YAML:
+
+```bash
+nah allow filesystem_delete      # allow an action type
+nah deny network_outbound        # block an action type
+nah classify "docker rm" container_destructive  # teach nah a command
+nah trust api.example.com        # trust a network host
+nah allow-path ~/sensitive/dir   # exempt a path for this project
+nah status                       # show all custom rules
+nah forget filesystem_delete     # remove a rule
 ```
 
 <h2 id="auto-mode">Works with Auto Mode</h2>
@@ -122,10 +217,10 @@ Tool call → nah (deterministic) → Auto Mode (probabilistic) → execute
 
 | | Auto Mode | nah | Both |
 |---|---|---|---|
-| **Engine** | LLM reasoning | Deterministic rules | Hard floor + smart fallback |
-| **Latency** | ~500ms-2s | <5ms | Faster on average |
-| **Cost** | Extra tokens/call | Zero | Reduced |
-| **Prompt injection** | Vulnerable | Immune | Immune at the deterministic layer |
+| **Engine** | LLM reasoning | Deterministic rules + optional LLM | Hard floor + smart fallback |
+| **Latency** | ~500ms-2s | <5ms deterministic | Faster on average |
+| **Cost** | Extra tokens/call | Zero (LLM layer optional) | Reduced |
+| **Prompt injection** | Vulnerable | Immune at the deterministic layer | Immune floor |
 | **Content inspection** | No | Yes | Yes |
 | **Your rules** | Anthropic's black box | Your YAML | You control the floor |
 
@@ -133,7 +228,7 @@ Auto Mode makes Claude smarter about permissions. nah makes it impossible for th
 
 ## How it's different
 
-**vs. deny lists** ([safety-net](https://github.com/kenryu42/claude-code-safety-net), [destructive_command_guard](https://github.com/Dicklesworthstone/destructive_command_guard)) — Pattern matching on command strings is trivially bypassed. nah resolves paths, inspects content, guards all 6 tools, and classifies by action type instead of command name.
+**vs. deny lists** ([safety-net](https://github.com/kenryu42/claude-code-safety-net), [destructive_command_guard](https://github.com/Dicklesworthstone/destructive_command_guard)) — Pattern matching on command strings is trivially bypassed. nah resolves paths, inspects content, guards all 6 tools + MCP, and classifies by action type instead of command name.
 
 **vs. OS sandboxes** ([nono](https://github.com/always-further/nono)) — Complementary layers. Sandboxes enforce at the OS level but can't distinguish safe from unsafe operations on allowed paths. nah adds the smart gate inside the OS fence. `pip install` on any machine with Python 3.
 
