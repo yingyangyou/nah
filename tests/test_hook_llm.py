@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from nah import agents, config, taxonomy
+from nah import agents, config, hook, taxonomy
 from nah.config import NahConfig
 from nah.hook import handle_bash, _is_llm_eligible, _resolve_ask_for_agent
 from nah.bash import ClassifyResult, StageResult
@@ -303,3 +303,91 @@ class TestLlmMaxDecisionCap:
 
         result = handle_bash({"command": "somethingunknown123"})
         assert result["decision"] == "block"
+
+
+# -- Transcript context passthrough tests --
+
+
+def _user_msg(text):
+    return {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+
+
+class TestTranscriptPassthrough:
+    """Verify transcript_path flows from hook module-level to LLM prompts."""
+
+    @patch("nah.llm.urllib.request.urlopen")
+    def test_bash_llm_receives_transcript(self, mock_urlopen, project_root, tmp_path):
+        """handle_bash → _try_llm reads _transcript_path and includes context."""
+        _set_llm_config(_ollama_config())
+
+        # Create transcript
+        f = tmp_path / "t.jsonl"
+        f.write_text(json.dumps(_user_msg("clean the build")) + "\n")
+        hook._transcript_path = str(f)
+
+        captured = []
+
+        def capture(req, **kw):
+            captured.append(json.loads(req.data.decode()))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "response": '{"decision": "allow", "reasoning": "build cleanup"}'
+            }).encode()
+            return resp
+
+        mock_urlopen.side_effect = capture
+
+        result = handle_bash({"command": "somethingunknown123"})
+        assert result["decision"] == "allow"
+        assert len(captured) == 1
+        assert "clean the build" in captured[0]["prompt"]
+
+    @patch("nah.llm.urllib.request.urlopen")
+    def test_resolve_ask_receives_transcript(self, mock_urlopen, tmp_path):
+        """_resolve_ask_for_agent reads _transcript_path and includes context."""
+        _set_llm_config(_ollama_config())
+
+        f = tmp_path / "t.jsonl"
+        f.write_text(json.dumps(_user_msg("set up SSH")) + "\n")
+        hook._transcript_path = str(f)
+
+        captured = []
+
+        def capture(req, **kw):
+            captured.append(json.loads(req.data.decode()))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "response": '{"decision": "allow", "reasoning": "ssh setup"}'
+            }).encode()
+            return resp
+
+        mock_urlopen.side_effect = capture
+
+        decision, resolved_by, _ = _resolve_ask_for_agent(
+            {"decision": taxonomy.ASK, "message": "Write: sensitive path"},
+            "Write",
+        )
+        assert decision["decision"] == "allow"
+        assert len(captured) == 1
+        assert "set up SSH" in captured[0]["prompt"]
+
+    @patch("nah.llm.urllib.request.urlopen")
+    def test_no_transcript_no_context(self, mock_urlopen, project_root):
+        """Without transcript, prompt has no context section."""
+        _set_llm_config(_ollama_config())
+        hook._transcript_path = ""
+
+        captured = []
+
+        def capture(req, **kw):
+            captured.append(json.loads(req.data.decode()))
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "response": '{"decision": "allow", "reasoning": "ok"}'
+            }).encode()
+            return resp
+
+        mock_urlopen.side_effect = capture
+
+        handle_bash({"command": "somethingunknown123"})
+        assert "Recent conversation" not in captured[0]["prompt"]

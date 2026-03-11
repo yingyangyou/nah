@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from nah import paths
+from nah import hook, paths
 from nah.config import reset_config
 
 
@@ -18,6 +18,7 @@ def _reset_state():
     paths.reset_sensitive_paths()
     paths._sensitive_paths_merged = True
     reset_config()
+    hook._transcript_path = ""
 
 
 @pytest.fixture

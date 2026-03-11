@@ -8,6 +8,8 @@ from nah import agents, paths, taxonomy
 from nah.bash import classify_command
 from nah.content import scan_content, format_content_message, is_credential_search
 
+_transcript_path: str = ""  # set per-invocation by main()
+
 
 def _check_write_content(tool_name: str, tool_input: dict, content_field: str) -> dict:
     """Shared handler for Write/Edit: path check + content inspection."""
@@ -111,7 +113,7 @@ def _try_llm(classify_result) -> tuple[dict | None, dict]:
         if not cfg.llm or not cfg.llm.get("enabled", False):
             return None, {}
         from nah.llm import try_llm
-        llm_call = try_llm(classify_result, cfg.llm)
+        llm_call = try_llm(classify_result, cfg.llm, _transcript_path)
         llm_meta = {}
         if llm_call.cascade:
             llm_meta = {
@@ -145,7 +147,7 @@ def _resolve_ask_for_agent(decision: dict, tool_name: str) -> tuple[dict, str, d
     if cfg.llm and cfg.llm.get("enabled", False):
         try:
             from nah.llm import try_llm_generic
-            llm_call = try_llm_generic(tool_name, reason, cfg.llm)
+            llm_call = try_llm_generic(tool_name, reason, cfg.llm, _transcript_path)
             llm_meta = {}
             if llm_call.cascade:
                 llm_meta = {
@@ -379,9 +381,11 @@ def main():
         import time
         t0 = time.monotonic()
 
+        global _transcript_path
         data = json.loads(sys.stdin.read())
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
+        _transcript_path = data.get("transcript_path", "")
 
         agent = agents.detect_agent(data)
         canonical = agents.normalize_tool(tool_name)
