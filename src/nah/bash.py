@@ -62,9 +62,11 @@ def classify_command(command: str) -> ClassifyResult:
     builtin_table = None
     project_table = None
     user_actions = None
+    profile = "full"
     try:
         from nah.config import get_config  # lazy import
         cfg = get_config()
+        profile = cfg.profile
         if cfg.classify_global:
             global_table = taxonomy.build_user_table(cfg.classify_global)
         builtin_table = taxonomy.get_builtin_table(cfg.profile)
@@ -81,7 +83,8 @@ def classify_command(command: str) -> ClassifyResult:
     # Classify each stage
     for stage in stages:
         sr = _classify_stage(stage, global_table=global_table, builtin_table=builtin_table,
-                             project_table=project_table, user_actions=user_actions)
+                             project_table=project_table, user_actions=user_actions,
+                             profile=profile)
         result.stages.append(sr)
 
     # Check pipe composition rules
@@ -183,6 +186,7 @@ def _classify_stage(
     builtin_table: list | None = None,
     project_table: list | None = None,
     user_actions: dict[str, str] | None = None,
+    profile: str = "full",
 ) -> StageResult:
     """Classify a single pipeline stage."""
     tokens = stage.tokens
@@ -195,12 +199,13 @@ def _classify_stage(
     # Shell unwrapping
     unwrapped = _unwrap_shell(stage, depth, global_table=global_table,
                               builtin_table=builtin_table, project_table=project_table,
-                              user_actions=user_actions)
+                              user_actions=user_actions, profile=profile)
     if unwrapped is not None:
         return unwrapped
 
     # Classify tokens
-    sr.action_type = taxonomy.classify_tokens(tokens, global_table, builtin_table, project_table)
+    sr.action_type = taxonomy.classify_tokens(tokens, global_table, builtin_table, project_table,
+                                              profile=profile)
     sr.default_policy = taxonomy.get_policy(sr.action_type, user_actions)
 
     # Handle redirect target — treat as filesystem_write for the target path
@@ -259,6 +264,7 @@ def _unwrap_shell(
     builtin_table: list | None,
     project_table: list | None,
     user_actions: dict[str, str] | None,
+    profile: str = "full",
 ) -> StageResult | None:
     """Try shell unwrapping. Returns StageResult if handled, None if not a wrapper."""
     tokens = stage.tokens
@@ -273,7 +279,7 @@ def _unwrap_shell(
             inner_stage = Stage(tokens=inner, operator=stage.operator)
             return _classify_stage(inner_stage, depth + 1, global_table=global_table,
                                    builtin_table=builtin_table, project_table=project_table,
-                                   user_actions=user_actions)
+                                   user_actions=user_actions, profile=profile)
         return None  # Introspection or bare — fall through to classify
 
     is_wrapper, inner = taxonomy.is_shell_wrapper(tokens)
@@ -293,7 +299,7 @@ def _unwrap_shell(
         inner_stage = Stage(tokens=inner_tokens, operator=stage.operator)
         return _classify_stage(inner_stage, depth + 1, global_table=global_table,
                                builtin_table=builtin_table, project_table=project_table,
-                               user_actions=user_actions)
+                               user_actions=user_actions, profile=profile)
 
     return None
 

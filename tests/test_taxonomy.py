@@ -935,22 +935,22 @@ class TestProfiles:
         assert classify_tokens(["rm", "-rf", "/"], builtin_table=table) == "unknown"
         assert classify_tokens(["git", "status"], builtin_table=table) == "unknown"
 
-    def test_profile_none_curl_still_works(self):
-        """Special classifiers (curl) work regardless of profile."""
+    def test_profile_none_curl_skipped(self):
+        """Flag classifiers skipped under profile=none (FD-050)."""
         table = get_builtin_table("none")
-        assert classify_tokens(["curl", "x"], builtin_table=table) == "network_outbound"
+        assert classify_tokens(["curl", "x"], builtin_table=table, profile="none") == "unknown"
 
-    def test_profile_none_find_still_works(self):
-        """Special classifiers (find) work regardless of profile."""
+    def test_profile_none_find_skipped(self):
+        """Flag classifiers skipped under profile=none (FD-050)."""
         table = get_builtin_table("none")
-        assert classify_tokens(["find", ".", "-name", "*.py"], builtin_table=table) == "filesystem_read"
-        assert classify_tokens(["find", ".", "-delete"], builtin_table=table) == "filesystem_delete"
+        assert classify_tokens(["find", ".", "-name", "*.py"], builtin_table=table, profile="none") == "unknown"
+        assert classify_tokens(["find", ".", "-delete"], builtin_table=table, profile="none") == "unknown"
 
-    def test_profile_none_git_special_still_works(self):
-        """Flag-dependent git classifiers work regardless of profile."""
+    def test_profile_none_git_skipped(self):
+        """Flag classifiers skipped under profile=none (FD-050)."""
         table = get_builtin_table("none")
-        assert classify_tokens(["git", "push", "--force"], builtin_table=table) == "git_history_rewrite"
-        assert classify_tokens(["git", "reset", "--hard"], builtin_table=table) == "git_discard"
+        assert classify_tokens(["git", "push", "--force"], builtin_table=table, profile="none") == "unknown"
+        assert classify_tokens(["git", "reset", "--hard"], builtin_table=table, profile="none") == "unknown"
 
 
 # --- Three-table lookup (FD-032) ---
@@ -1017,6 +1017,156 @@ class TestThreeTableLookup:
         builtin_t = get_builtin_table("minimal")
         # Global "rm" wins over minimal built-in "rm → filesystem_delete"
         assert classify_tokens(["rm", "file"], global_t, builtin_t, None) == "my_safe_rm"
+
+
+# --- FD-050: Global config overrides flag classifiers ---
+
+
+class TestGlobalOverridesFlagClassifiers:
+    """FD-050: Global table checked before flag classifiers; profile:none skips them."""
+
+    # --- V1: Default behavior (no regressions) ---
+
+    def test_default_sed_i_unchanged(self):
+        """No global table → sed -i still classified by flag classifier."""
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], builtin_table=builtin_t) == "filesystem_write"
+
+    def test_default_curl_d_unchanged(self):
+        """No global table → curl -d still classified by flag classifier."""
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["curl", "-d", "data", "url"], builtin_table=builtin_t) == "network_write"
+
+    def test_default_git_push_force_unchanged(self):
+        """No global table → git push --force still classified by flag classifier."""
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["git", "push", "--force"], builtin_table=builtin_t) == "git_history_rewrite"
+
+    # --- V4–V10: Per-classifier override via global table ---
+
+    def test_global_overrides_find(self):
+        """Global classify entry overrides _classify_find."""
+        global_t = build_user_table({"filesystem_read": ["find"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["find", ".", "-delete"], global_t, builtin_t) == "filesystem_read"
+
+    def test_global_overrides_sed(self):
+        """Global classify entry overrides _classify_sed."""
+        global_t = build_user_table({"filesystem_read": ["sed"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], global_t, builtin_t) == "filesystem_read"
+
+    def test_global_overrides_tar(self):
+        """Global classify entry overrides _classify_tar."""
+        global_t = build_user_table({"filesystem_read": ["tar"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["tar", "czf", "a.tar.gz", "."], global_t, builtin_t) == "filesystem_read"
+
+    def test_global_overrides_git(self):
+        """Global classify entry overrides _classify_git."""
+        global_t = build_user_table({"git_safe": ["git tag"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["git", "tag", "-d", "v1"], global_t, builtin_t) == "git_safe"
+
+    def test_global_overrides_curl(self):
+        """Global classify entry overrides _classify_curl."""
+        global_t = build_user_table({"network_outbound": ["curl"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["curl", "-d", "data", "url"], global_t, builtin_t) == "network_outbound"
+
+    def test_global_overrides_wget(self):
+        """Global classify entry overrides _classify_wget."""
+        global_t = build_user_table({"network_outbound": ["wget"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["wget", "--post-data=x", "url"], global_t, builtin_t) == "network_outbound"
+
+    def test_global_overrides_httpie(self):
+        """Global classify entry overrides _classify_httpie."""
+        global_t = build_user_table({"network_outbound": ["http"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["http", "POST", "example.com"], global_t, builtin_t) == "network_outbound"
+
+    # --- V11–V13: Granularity (longest-prefix-first) ---
+
+    def test_longest_prefix_wins(self):
+        """More specific 'sed -i' wins over broader 'sed'."""
+        global_t = build_user_table({
+            "filesystem_write": ["sed -i"],
+            "filesystem_read": ["sed"],
+        })
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], global_t, builtin_t) == "filesystem_write"
+        assert classify_tokens(["sed", "s/a/b/", "file"], global_t, builtin_t) == "filesystem_read"
+
+    def test_partial_override_leaves_other_commands(self):
+        """Overriding git tag doesn't affect git push (flag classifier still runs)."""
+        global_t = build_user_table({"git_safe": ["git tag"]})
+        builtin_t = get_builtin_table("full")
+        # git tag overridden
+        assert classify_tokens(["git", "tag", "-d", "v1"], global_t, builtin_t) == "git_safe"
+        # git push still uses flag classifier
+        assert classify_tokens(["git", "push", "--force"], global_t, builtin_t) == "git_history_rewrite"
+
+    def test_git_push_granularity(self):
+        """More specific 'git push --force' wins over broader 'git push'."""
+        global_t = build_user_table({
+            "git_history_rewrite": ["git push --force"],
+            "git_safe": ["git push"],
+        })
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["git", "push", "--force"], global_t, builtin_t) == "git_history_rewrite"
+        assert classify_tokens(["git", "push", "origin", "main"], global_t, builtin_t) == "git_safe"
+
+    # --- V14–V15: Git global flag stripping ---
+
+    def test_git_C_stripped_for_global_lookup(self):
+        """git -C /path push --force matches global 'git push --force'."""
+        global_t = build_user_table({"git_safe": ["git push --force"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["git", "-C", "/path", "push", "--force"], global_t, builtin_t) == "git_safe"
+
+    def test_git_no_pager_stripped_for_global_lookup(self):
+        """git --no-pager push matches global 'git push'."""
+        global_t = build_user_table({"git_safe": ["git push"]})
+        builtin_t = get_builtin_table("full")
+        assert classify_tokens(["git", "--no-pager", "push"], global_t, builtin_t) == "git_safe"
+
+    # --- V16–V21: Profile:none ---
+
+    def test_profile_none_sed_unknown(self):
+        """profile:none → sed -i → unknown (flag classifier skipped)."""
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], profile="none") == "unknown"
+
+    def test_profile_none_curl_unknown(self):
+        """profile:none → curl -d → unknown."""
+        assert classify_tokens(["curl", "-d", "data", "url"], profile="none") == "unknown"
+
+    def test_profile_none_find_unknown(self):
+        """profile:none → find -delete → unknown."""
+        assert classify_tokens(["find", ".", "-delete"], profile="none") == "unknown"
+
+    def test_profile_none_git_unknown(self):
+        """profile:none → git push --force → unknown."""
+        assert classify_tokens(["git", "push", "--force"], profile="none") == "unknown"
+
+    def test_profile_none_global_still_works(self):
+        """profile:none + global table → global table still classifies."""
+        global_t = build_user_table({"filesystem_read": ["sed"]})
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], global_t, profile="none") == "filesystem_read"
+
+    def test_profile_none_ls_unknown(self):
+        """profile:none → ls → unknown (builtin table empty, flag classifiers skipped)."""
+        table = get_builtin_table("none")
+        assert classify_tokens(["ls", "-la"], builtin_table=table, profile="none") == "unknown"
+
+    # --- V25: Supply-chain safety ---
+
+    def test_project_cannot_override_flag_classifiers(self):
+        """Project table is Phase 3 — cannot override flag classifiers."""
+        builtin_t = get_builtin_table("full")
+        project_t = build_user_table({"filesystem_read": ["sed"]})
+        # Project says sed → filesystem_read, but flag classifier runs first
+        assert classify_tokens(["sed", "-i", "s/a/b/", "file"], None, builtin_t, project_t) == "filesystem_write"
 
 
 # --- FD-018: sed classifier ---

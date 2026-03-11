@@ -195,50 +195,61 @@ def classify_tokens(
     global_table: list | None = None,
     builtin_table: list | None = None,
     project_table: list | None = None,
+    *,
+    profile: str = "full",
 ) -> str:
-    """Classify command tokens via three-table priority lookup.
+    """Classify command tokens via three-phase lookup.
 
-    Priority: global (trusted) → built-in (curated) → project (untrusted).
-    First match wins with early return — project can only fill gaps.
+    Phase 1: Global table (trusted user config) — always runs.
+    Phase 2: Flag classifiers (built-in opinions) — skipped when profile == "none".
+    Phase 3: Remaining tables (builtin, project) — global already checked.
     """
     if not tokens:
         return UNKNOWN
 
-    # Special case: find
-    action = _classify_find(tokens)
-    if action is not None:
-        return action
+    # --- Phase 1: Global table override (trusted user config) ---
+    # Non-git: check global table on raw tokens.
+    if global_table and tokens[0] != "git":
+        result = _prefix_match(tokens, global_table)
+        if result != UNKNOWN:
+            return result
 
-    # Special case: sed
-    action = _classify_sed(tokens)
-    if action is not None:
-        return action
-
-    # Special case: tar
-    action = _classify_tar(tokens)
-    if action is not None:
-        return action
-
-    # Strip git global flags so `git -C /dir rm` classifies as `git rm`.
+    # Git: strip global flags first, then check global table on clean tokens.
     if tokens[0] == "git":
         tokens = _strip_git_global_flags(tokens)
-        action = _classify_git(tokens)
+        if global_table:
+            result = _prefix_match(tokens, global_table)
+            if result != UNKNOWN:
+                return result
+
+    # --- Phase 2: Flag classifiers (built-in opinions) ---
+    # Skipped entirely when profile == "none".
+    if profile != "none":
+        action = _classify_find(tokens)
+        if action is not None:
+            return action
+        action = _classify_sed(tokens)
+        if action is not None:
+            return action
+        action = _classify_tar(tokens)
+        if action is not None:
+            return action
+        if tokens[0] == "git":
+            action = _classify_git(tokens)
+            if action is not None:
+                return action
+        action = _classify_curl(tokens)
+        if action is not None:
+            return action
+        action = _classify_wget(tokens)
+        if action is not None:
+            return action
+        action = _classify_httpie(tokens)
         if action is not None:
             return action
 
-    # Network classifiers: curl, wget, httpie
-    action = _classify_curl(tokens)
-    if action is not None:
-        return action
-    action = _classify_wget(tokens)
-    if action is not None:
-        return action
-    action = _classify_httpie(tokens)
-    if action is not None:
-        return action
-
-    # Three-table lookup: global (trusted) → built-in → project (untrusted)
-    for table in (global_table, builtin_table, project_table):
+    # --- Phase 3: Remaining tables (builtin, project) ---
+    for table in (builtin_table, project_table):
         if table:
             result = _prefix_match(tokens, table)
             if result != UNKNOWN:
