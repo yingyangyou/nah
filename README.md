@@ -40,7 +40,7 @@ pip install nah
 nah install
 ```
 
-You are up and running.
+You are up and running. To uninstall: `nah uninstall && pip uninstall nah`.
 
 Also supports Snowflake's Cortex Code:
 
@@ -224,16 +224,9 @@ nah forget filesystem_delete     # remove a rule
 
 **vs. built-in permissions** — Not configurable enough. You can't say "allow deletes inside my project but ask outside."
 
-## Uninstall
-
-```bash
-nah uninstall
-pip uninstall nah
-```
-
 ## License
 
-MIT
+[MIT](LICENSE)
 
 <p align="center">
   <code>--dangerously-skip-permissions?</code><br><br>
