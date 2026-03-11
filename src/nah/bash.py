@@ -217,6 +217,16 @@ def _classify_stage(
     return sr
 
 
+def _obfuscated_result(tokens: list[str], reason: str, user_actions: dict[str, str] | None) -> StageResult:
+    """Build a StageResult for obfuscated commands."""
+    sr = StageResult(tokens=tokens)
+    sr.action_type = taxonomy.OBFUSCATED
+    sr.default_policy = taxonomy.get_policy(taxonomy.OBFUSCATED, user_actions)
+    sr.decision = sr.default_policy
+    sr.reason = reason
+    return sr
+
+
 def _unwrap_shell(
     stage: Stage,
     depth: int,
@@ -230,12 +240,7 @@ def _unwrap_shell(
     tokens = stage.tokens
 
     if depth >= _MAX_UNWRAP_DEPTH:
-        sr = StageResult(tokens=tokens)
-        sr.action_type = taxonomy.OBFUSCATED
-        sr.default_policy = taxonomy.get_policy(taxonomy.OBFUSCATED, user_actions)
-        sr.decision = sr.default_policy
-        sr.reason = "excessive shell nesting"
-        return sr
+        return _obfuscated_result(tokens, "excessive shell nesting", user_actions)
 
     is_wrapper, inner = taxonomy.is_shell_wrapper(tokens)
     if not is_wrapper or inner is None:
@@ -243,22 +248,12 @@ def _unwrap_shell(
 
     # Check for $() or backticks in eval — obfuscated
     if tokens[0] == "eval" and ("$(" in inner or "`" in inner):
-        sr = StageResult(tokens=tokens)
-        sr.action_type = taxonomy.OBFUSCATED
-        sr.default_policy = taxonomy.get_policy(taxonomy.OBFUSCATED, user_actions)
-        sr.decision = sr.default_policy
-        sr.reason = "eval with command substitution"
-        return sr
+        return _obfuscated_result(tokens, "eval with command substitution", user_actions)
 
     try:
         inner_tokens = shlex.split(inner)
     except ValueError:
-        sr = StageResult(tokens=tokens)
-        sr.action_type = taxonomy.OBFUSCATED
-        sr.default_policy = taxonomy.get_policy(taxonomy.OBFUSCATED, user_actions)
-        sr.decision = sr.default_policy
-        sr.reason = "unparseable inner command"
-        return sr
+        return _obfuscated_result(tokens, "unparseable inner command", user_actions)
 
     if inner_tokens:
         inner_stage = Stage(tokens=inner_tokens, operator=stage.operator)
@@ -302,16 +297,17 @@ def _resolve_context(action_type: str, tokens: list[str]) -> tuple[str, str]:
     if action_type == taxonomy.NETWORK_OUTBOUND:
         return context.resolve_network_context(tokens)
 
-    # Filesystem actions — extract target paths
-    target = _extract_primary_target(tokens)
-    if target:
-        return context.resolve_filesystem_context(target)
+    if action_type in (taxonomy.FILESYSTEM_READ, taxonomy.FILESYSTEM_WRITE,
+                       taxonomy.FILESYSTEM_DELETE):
+        target = _extract_primary_target(tokens)
+        if target:
+            return context.resolve_filesystem_context(target)
+        if action_type in (taxonomy.FILESYSTEM_DELETE, taxonomy.FILESYSTEM_WRITE):
+            return taxonomy.ASK, f"{action_type}: no target path extracted"
+        return taxonomy.ALLOW, f"{action_type}: no target path"
 
-    # No path extracted — check action type default
-    if action_type in (taxonomy.FILESYSTEM_DELETE, taxonomy.FILESYSTEM_WRITE):
-        return taxonomy.ASK, f"{action_type}: no target path extracted"
-
-    return taxonomy.ALLOW, f"{action_type}: no target path"
+    # Any action type without a resolver: fail-safe to ask
+    return taxonomy.ASK, f"{action_type}: no context resolver"
 
 
 def _extract_primary_target(tokens: list[str]) -> str:

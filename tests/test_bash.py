@@ -401,3 +401,32 @@ class TestFD018Regressions:
         """env must remain unknown (exfiltration risk)."""
         r = classify_command("env")
         assert r.stages[0].action_type == "unknown"
+
+
+# --- FD-046: Context resolver fallback ---
+
+
+class TestContextResolverFallback:
+    """FD-046: Non-filesystem/network types with context policy must ASK."""
+
+    def test_sql_write_context_policy_asks(self, project_root, monkeypatch):
+        """sql_write dispatched to _resolve_context() gets ASK, not ALLOW."""
+        from nah import taxonomy
+
+        original = taxonomy.get_policy
+
+        def patched(action_type, user_overrides):
+            if action_type == "sql_write":
+                return "context"
+            return original(action_type, user_overrides)
+
+        monkeypatch.setattr(taxonomy, "get_policy", patched)
+        r = classify_command("psql -c 'SELECT 1'")
+        assert r.final_decision == "ask"
+        assert "no context resolver" in r.reason
+
+    def test_filesystem_write_still_uses_context(self, project_root):
+        """filesystem_write with context policy still resolves via filesystem."""
+        target = os.path.join(project_root, "output.txt")
+        r = classify_command(f"tee {target}")
+        assert r.final_decision == "allow"  # inside project → allow
