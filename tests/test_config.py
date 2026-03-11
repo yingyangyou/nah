@@ -445,3 +445,122 @@ class TestTrustedPaths:
         """Non-string entries are coerced to str."""
         cfg = _merge_configs({"trusted_paths": [42, True]}, {})
         assert cfg.trusted_paths == ["42", "True"]
+
+
+class TestContentPatterns:
+    """FD-052: Configurable content patterns — config parsing."""
+
+    # --- content_patterns.add: global-only ---
+
+    def test_content_patterns_add_from_global(self):
+        cfg = _merge_configs(
+            {"content_patterns": {"add": [
+                {"category": "custom", "pattern": "\\bDROP\\b", "description": "DROP"}
+            ]}},
+            {},
+        )
+        assert len(cfg.content_patterns_add) == 1
+        assert cfg.content_patterns_add[0]["category"] == "custom"
+
+    def test_content_patterns_add_project_ignored(self):
+        cfg = _merge_configs(
+            {},
+            {"content_patterns": {"add": [
+                {"category": "custom", "pattern": "\\bDROP\\b", "description": "DROP"}
+            ]}},
+        )
+        assert cfg.content_patterns_add == []
+
+    # --- content_patterns.suppress: global-only ---
+
+    def test_content_patterns_suppress_from_global(self):
+        cfg = _merge_configs(
+            {"content_patterns": {"suppress": ["rm -rf", "requests.post"]}},
+            {},
+        )
+        assert cfg.content_patterns_suppress == ["rm -rf", "requests.post"]
+
+    def test_content_patterns_suppress_project_ignored(self):
+        cfg = _merge_configs(
+            {},
+            {"content_patterns": {"suppress": ["rm -rf"]}},
+        )
+        assert cfg.content_patterns_suppress == []
+
+    # --- content_patterns.policies: tighten-only ---
+
+    def test_content_policies_global(self):
+        cfg = _merge_configs(
+            {"content_patterns": {"policies": {"secret": "block"}}},
+            {},
+        )
+        assert cfg.content_policies == {"secret": "block"}
+
+    def test_content_policies_project_tightens(self):
+        cfg = _merge_configs(
+            {"content_patterns": {"policies": {"secret": "ask"}}},
+            {"content_patterns": {"policies": {"secret": "block"}}},
+        )
+        assert cfg.content_policies["secret"] == "block"
+
+    def test_content_policies_project_cannot_loosen(self):
+        cfg = _merge_configs(
+            {"content_patterns": {"policies": {"secret": "block"}}},
+            {"content_patterns": {"policies": {"secret": "ask"}}},
+        )
+        assert cfg.content_policies["secret"] == "block"
+
+    # --- content_patterns invalid types ---
+
+    def test_content_patterns_invalid_top_level(self):
+        cfg = _merge_configs({"content_patterns": "not a dict"}, {})
+        assert cfg.content_patterns_add == []
+        assert cfg.content_patterns_suppress == []
+        assert cfg.content_policies == {}
+
+    def test_content_patterns_add_invalid_type(self):
+        cfg = _merge_configs({"content_patterns": {"add": "not a list"}}, {})
+        assert cfg.content_patterns_add == []
+
+    def test_content_patterns_suppress_invalid_type(self):
+        cfg = _merge_configs({"content_patterns": {"suppress": 42}}, {})
+        assert cfg.content_patterns_suppress == []
+
+    # --- credential_patterns: entirely global-only ---
+
+    def test_credential_patterns_add_from_global(self):
+        cfg = _merge_configs(
+            {"credential_patterns": {"add": ["\\bconnection_string\\b"]}},
+            {},
+        )
+        assert cfg.credential_patterns_add == ["\\bconnection_string\\b"]
+
+    def test_credential_patterns_suppress_from_global(self):
+        cfg = _merge_configs(
+            {"credential_patterns": {"suppress": ["\\btoken\\b"]}},
+            {},
+        )
+        assert cfg.credential_patterns_suppress == ["\\btoken\\b"]
+
+    def test_credential_patterns_project_ignored(self):
+        cfg = _merge_configs(
+            {},
+            {"credential_patterns": {"add": ["evil"], "suppress": ["password"]}},
+        )
+        assert cfg.credential_patterns_add == []
+        assert cfg.credential_patterns_suppress == []
+
+    def test_credential_patterns_invalid_type(self):
+        cfg = _merge_configs({"credential_patterns": "not a dict"}, {})
+        assert cfg.credential_patterns_add == []
+        assert cfg.credential_patterns_suppress == []
+
+    # --- Empty merge preserves defaults ---
+
+    def test_empty_merge_defaults(self):
+        cfg = _merge_configs({}, {})
+        assert cfg.content_patterns_add == []
+        assert cfg.content_patterns_suppress == []
+        assert cfg.content_policies == {}
+        assert cfg.credential_patterns_add == []
+        assert cfg.credential_patterns_suppress == []

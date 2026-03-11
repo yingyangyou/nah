@@ -178,3 +178,247 @@ class TestIsCredentialSearch:
     def test_case_insensitive(self):
         assert is_credential_search("PASSWORD") is True
         assert is_credential_search("Token") is True
+
+
+# --- FD-052: Configurable content patterns ---
+
+from nah.config import NahConfig
+from nah import config as _config_mod
+from nah import content as _content_mod
+
+
+def _with_config(cfg: NahConfig):
+    """Set up content module for config-driven test."""
+    _content_mod.reset_content_patterns()
+    _content_mod._content_patterns_merged = False
+    _config_mod._cached_config = cfg
+
+
+def _cleanup():
+    """Restore content module to test-safe state."""
+    _content_mod.reset_content_patterns()
+    _content_mod._content_patterns_merged = True
+
+
+class TestContentPatternSuppression:
+    """FD-052: Suppressing built-in content patterns."""
+
+    def test_suppress_by_description(self):
+        _with_config(NahConfig(content_patterns_suppress=["rm -rf"]))
+        try:
+            matches = scan_content("rm -rf /tmp/stuff")
+            descs = [m.pattern_desc for m in matches]
+            assert "rm -rf" not in descs
+        finally:
+            _cleanup()
+
+    def test_suppress_unmatched_warns(self, capsys):
+        _with_config(NahConfig(content_patterns_suppress=["nonexistent pattern"]))
+        try:
+            scan_content("safe content")
+            captured = capsys.readouterr()
+            assert "unmatched content_patterns.suppress" in captured.err
+        finally:
+            _cleanup()
+
+    def test_suppress_does_not_affect_other_patterns(self):
+        _with_config(NahConfig(content_patterns_suppress=["rm -rf"]))
+        try:
+            matches = scan_content("shutil.rmtree('/data')")
+            assert any(m.pattern_desc == "shutil.rmtree" for m in matches)
+        finally:
+            _cleanup()
+
+
+class TestContentPatternAdd:
+    """FD-052: Adding custom content patterns."""
+
+    def test_add_custom_pattern(self):
+        _with_config(NahConfig(content_patterns_add=[
+            {"category": "sql_destructive", "pattern": r"\bDROP\s+TABLE\b",
+             "description": "DROP TABLE"},
+        ]))
+        try:
+            matches = scan_content("DROP TABLE users;")
+            assert any(m.pattern_desc == "DROP TABLE" for m in matches)
+            assert any(m.category == "sql_destructive" for m in matches)
+        finally:
+            _cleanup()
+
+    def test_add_bad_regex_warns_and_skips(self, capsys):
+        _with_config(NahConfig(content_patterns_add=[
+            {"category": "bad", "pattern": "[invalid",
+             "description": "bad pattern"},
+        ]))
+        try:
+            scan_content("anything")
+            captured = capsys.readouterr()
+            assert "invalid regex" in captured.err
+        finally:
+            _cleanup()
+
+    def test_add_empty_pattern_skips(self, capsys):
+        _with_config(NahConfig(content_patterns_add=[
+            {"category": "x", "pattern": "", "description": "empty"},
+        ]))
+        try:
+            scan_content("anything")
+            captured = capsys.readouterr()
+            assert "missing category/pattern/description" in captured.err
+        finally:
+            _cleanup()
+
+    def test_add_missing_fields_skips(self, capsys):
+        _with_config(NahConfig(content_patterns_add=[
+            {"category": "x"},  # missing pattern and description
+        ]))
+        try:
+            scan_content("anything")
+            captured = capsys.readouterr()
+            assert "missing" in captured.err
+        finally:
+            _cleanup()
+
+    def test_add_non_dict_entry_skipped(self):
+        _with_config(NahConfig(content_patterns_add=["not a dict", 42]))
+        try:
+            scan_content("anything")  # should not crash
+        finally:
+            _cleanup()
+
+    def test_suppress_then_add_same_description(self):
+        _with_config(NahConfig(
+            content_patterns_suppress=["rm -rf"],
+            content_patterns_add=[
+                {"category": "custom_destructive", "pattern": r"\brm\s+-rf\b",
+                 "description": "rm -rf"},
+            ],
+        ))
+        try:
+            matches = scan_content("rm -rf /tmp")
+            rm_matches = [m for m in matches if m.pattern_desc == "rm -rf"]
+            assert len(rm_matches) >= 1
+            assert any(m.category == "custom_destructive" for m in rm_matches)
+        finally:
+            _cleanup()
+
+
+class TestContentPolicies:
+    """FD-052: Per-category policy and multi-match aggregation."""
+
+    def test_default_policy_is_ask(self):
+        matches = scan_content("shutil.rmtree('/data')")
+        assert all(m.policy == "ask" for m in matches)
+
+    def test_per_category_policy(self):
+        _with_config(NahConfig(content_policies={"secret": "block"}))
+        try:
+            matches = scan_content("-----BEGIN RSA PRIVATE KEY-----")
+            secret_matches = [m for m in matches if m.category == "secret"]
+            assert len(secret_matches) >= 1
+            assert all(m.policy == "block" for m in secret_matches)
+        finally:
+            _cleanup()
+
+    def test_custom_category_gets_ask_default(self):
+        _with_config(NahConfig(content_patterns_add=[
+            {"category": "custom", "pattern": r"\bFOO\b",
+             "description": "FOO match"},
+        ]))
+        try:
+            matches = scan_content("FOO bar")
+            custom = [m for m in matches if m.category == "custom"]
+            assert len(custom) == 1
+            assert custom[0].policy == "ask"
+        finally:
+            _cleanup()
+
+    def test_multi_match_strictest_wins(self):
+        """Multiple categories with different policies: strictest wins."""
+        from nah import taxonomy
+        _with_config(NahConfig(
+            content_policies={"destructive": "ask", "secret": "block"},
+        ))
+        try:
+            text = "rm -rf /; -----BEGIN RSA PRIVATE KEY-----"
+            matches = scan_content(text)
+            policies = [m.policy for m in matches]
+            assert "ask" in policies
+            assert "block" in policies
+            strictest = max(policies, key=lambda p: taxonomy.STRICTNESS.get(p, 2))
+            assert strictest == "block"
+        finally:
+            _cleanup()
+
+
+class TestProfileNoneContent:
+    """FD-052: profile: none clears built-in patterns."""
+
+    def test_profile_none_no_content_matches(self):
+        _with_config(NahConfig(profile="none"))
+        try:
+            matches = scan_content("rm -rf /; -----BEGIN PRIVATE KEY-----")
+            assert matches == []
+        finally:
+            _cleanup()
+
+    def test_profile_none_no_credential_search(self):
+        _with_config(NahConfig(profile="none"))
+        try:
+            assert is_credential_search("password") is False
+        finally:
+            _cleanup()
+
+    def test_profile_none_plus_add(self):
+        _with_config(NahConfig(
+            profile="none",
+            content_patterns_add=[
+                {"category": "custom", "pattern": r"\bDANGER\b",
+                 "description": "danger word"},
+            ],
+        ))
+        try:
+            matches = scan_content("DANGER zone")
+            assert len(matches) == 1
+            assert matches[0].category == "custom"
+            # Built-in patterns should NOT match
+            assert scan_content("rm -rf /") == []
+        finally:
+            _cleanup()
+
+
+class TestCredentialPatternConfig:
+    """FD-052: Credential pattern suppression and addition."""
+
+    def test_suppress_credential_pattern(self):
+        _with_config(NahConfig(credential_patterns_suppress=[r"\btoken\b"]))
+        try:
+            assert is_credential_search("token") is False
+            assert is_credential_search("password") is True
+        finally:
+            _cleanup()
+
+    def test_add_credential_pattern(self):
+        _with_config(NahConfig(credential_patterns_add=[r"\bconnection_string\b"]))
+        try:
+            assert is_credential_search("connection_string") is True
+        finally:
+            _cleanup()
+
+    def test_suppress_unmatched_warns(self, capsys):
+        _with_config(NahConfig(credential_patterns_suppress=[r"\bnonexistent_regex\b"]))
+        try:
+            is_credential_search("anything")
+            captured = capsys.readouterr()
+            assert "unmatched credential_patterns.suppress" in captured.err
+        finally:
+            _cleanup()
+
+    def test_add_bad_regex_warns(self, capsys):
+        _with_config(NahConfig(credential_patterns_add=["[invalid"]))
+        try:
+            is_credential_search("anything")
+            captured = capsys.readouterr()
+            assert "invalid regex" in captured.err
+        finally:
+            _cleanup()

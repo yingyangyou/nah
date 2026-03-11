@@ -24,6 +24,11 @@ class NahConfig:
     exec_sinks: list | dict = field(default_factory=list)
     sensitive_basenames: dict = field(default_factory=dict)
     decode_commands: list | dict = field(default_factory=list)
+    content_patterns_add: list = field(default_factory=list)
+    content_patterns_suppress: list = field(default_factory=list)
+    content_policies: dict = field(default_factory=dict)
+    credential_patterns_add: list = field(default_factory=list)
+    credential_patterns_suppress: list = field(default_factory=list)
     llm: dict = field(default_factory=dict)
     llm_max_decision: str = "ask"  # default: LLM can't escalate past ask
     llm_eligible: str | list = "default"
@@ -174,6 +179,24 @@ def _merge_configs(global_cfg: dict, project_cfg: dict) -> NahConfig:
         config.decode_commands = raw_dc
     else:
         config.decode_commands = []
+
+    # content_patterns: add/suppress global-only, policies tighten-only
+    g_content = _validate_dict(global_cfg.get("content_patterns", {}))
+    p_content = _validate_dict(project_cfg.get("content_patterns", {}))
+    raw_cp_add = g_content.get("add", [])
+    config.content_patterns_add = raw_cp_add if isinstance(raw_cp_add, list) else []
+    raw_cp_suppress = g_content.get("suppress", [])
+    config.content_patterns_suppress = raw_cp_suppress if isinstance(raw_cp_suppress, list) else []
+    g_policies = _validate_dict(g_content.get("policies", {}))
+    p_policies = _validate_dict(p_content.get("policies", {}))
+    config.content_policies = _merge_dict_tighten(g_policies, p_policies)
+
+    # credential_patterns: entirely global-only
+    g_cred = _validate_dict(global_cfg.get("credential_patterns", {}))
+    raw_cred_add = g_cred.get("add", [])
+    config.credential_patterns_add = raw_cred_add if isinstance(raw_cred_add, list) else []
+    raw_cred_suppress = g_cred.get("suppress", [])
+    config.credential_patterns_suppress = raw_cred_suppress if isinstance(raw_cred_suppress, list) else []
 
     # llm: global config ONLY — project .nah.yaml silently ignored
     config.llm = _validate_dict(global_cfg.get("llm", {}))

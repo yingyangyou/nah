@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from nah import hook, paths, taxonomy
+from nah import content, hook, paths, taxonomy
 from nah.config import reset_config
 from nah.context import reset_known_hosts
 
@@ -22,6 +22,8 @@ def _reset_state():
     from nah.context import _known_hosts_merged
     import nah.context
     nah.context._known_hosts_merged = True
+    content.reset_content_patterns()
+    content._content_patterns_merged = True
     yield
     paths.reset_project_root()
     paths.reset_sensitive_paths()
@@ -32,6 +34,8 @@ def _reset_state():
     taxonomy._decode_commands_merged = True
     reset_known_hosts()
     nah.context._known_hosts_merged = True
+    content.reset_content_patterns()
+    content._content_patterns_merged = True
     reset_config()
     hook._transcript_path = ""
 
