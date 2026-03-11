@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Unified decision dict key from mixed `reason`/`message` to single `"reason"` key, extracted DRY helpers (`_build_llm_meta`, `_resolve_cwd_context`, `_obfuscated_result`), converted `LLMResult` to `@dataclass`, added stderr trace to log error path (FD-026)
+
 - LLM config key renamed from `backends:` to `providers:` — old key accepted as deprecated alias for one version cycle. Log fields `llm_backend` → `llm_provider`, cascade entries `backend` → `provider` (FD-036)
 - Error default changed from `allow` to `ask` — crashes no longer silently bypass security (FD-014)
 - Hook output uses Claude Code `hookSpecificOutput` protocol with required `hookEventName` field (FD-014)
