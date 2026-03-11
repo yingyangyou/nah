@@ -7,6 +7,11 @@ from nah.config import get_global_config_path, get_project_config_path
 from nah.paths import get_project_root
 
 
+class CustomTypeError(ValueError):
+    """Unknown action type with no close matches — likely intentional custom type."""
+    pass
+
+
 def _ensure_yaml():
     """Raise RuntimeError if PyYAML is not available."""
     try:
@@ -31,6 +36,18 @@ def _write_config(path: str, data: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+
+def has_comments(path: str) -> bool:
+    """Check if YAML file contains comment lines."""
+    if not os.path.isfile(path):
+        return False
+    with open(path) as f:
+        for line in f:
+            stripped = line.lstrip()
+            if stripped.startswith("#") and not stripped.startswith("#!"):
+                return True
+    return False
 
 
 def _get_config_path(project: bool) -> str:
@@ -63,15 +80,18 @@ def _validate_action_scope(action_type: str, policy: str, project: bool) -> None
         )
 
 
-def write_action(action_type: str, policy: str, project: bool = False) -> str:
+def write_action(action_type: str, policy: str, project: bool = False,
+                  allow_custom: bool = False) -> str:
     """Write an action policy to config. Returns confirmation message."""
     _ensure_yaml()
-    valid, close = taxonomy.validate_action_type(action_type)
-    if not valid:
-        msg = f"Unknown action type: {action_type}"
-        if close:
-            msg += f". Did you mean: {', '.join(close)}?"
-        raise ValueError(msg)
+    if not allow_custom:
+        valid, close = taxonomy.validate_action_type(action_type)
+        if not valid:
+            if close:
+                raise ValueError(
+                    f"Unknown action type: {action_type}. Did you mean: {', '.join(close)}?"
+                )
+            raise CustomTypeError(action_type)
     _validate_action_scope(action_type, policy, project)
     path = _get_config_path(project)
     data = _read_config(path)
@@ -104,15 +124,18 @@ def write_allow_path(raw_path: str) -> str:
     return f"Allowed: {raw_path} → {project_root}"
 
 
-def write_classify(command: str, action_type: str, project: bool = False) -> str:
+def write_classify(command: str, action_type: str, project: bool = False,
+                    allow_custom: bool = False) -> str:
     """Write a classify entry. Returns confirmation message."""
     _ensure_yaml()
-    valid, close = taxonomy.validate_action_type(action_type)
-    if not valid:
-        msg = f"Unknown action type: {action_type}"
-        if close:
-            msg += f". Did you mean: {', '.join(close)}?"
-        raise ValueError(msg)
+    if not allow_custom:
+        valid, close = taxonomy.validate_action_type(action_type)
+        if not valid:
+            if close:
+                raise ValueError(
+                    f"Unknown action type: {action_type}. Did you mean: {', '.join(close)}?"
+                )
+            raise CustomTypeError(action_type)
     path = _get_config_path(project)
     data = _read_config(path)
     classify = data.setdefault("classify", {})

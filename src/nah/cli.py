@@ -376,7 +376,7 @@ def cmd_test(args: argparse.Namespace) -> None:
         print(f"Tool:     {tool}")
         print(f"Input:    {raw_input[:100]}")
         print(f"Decision: {decision['decision'].upper()}")
-        reason = decision.get("reason", decision.get("message", ""))
+        reason = decision.get("reason", "")
         if reason:
             print(f"Reason:   {reason}")
     else:
@@ -388,7 +388,7 @@ def cmd_test(args: argparse.Namespace) -> None:
         print(f"Tool:     {tool}")
         print(f"Input:    {raw_path}")
         print(f"Decision: {decision['decision'].upper()}")
-        reason = decision.get("reason", decision.get("message", ""))
+        reason = decision.get("reason", "")
         if reason:
             print(f"Reason:   {reason}")
 
@@ -449,11 +449,40 @@ def cmd_uninstall(args: argparse.Namespace) -> None:
     print("nah uninstalled.")
 
 
+def _confirm(message: str) -> bool:
+    """Prompt y/N. Non-interactive (piped) → False."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(f"{message} [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in ("y", "yes")
+
+
+def _warn_comments(project: bool) -> None:
+    """Warn and confirm if config has comments. Exits on deny."""
+    from nah.remember import has_comments
+    from nah.config import get_global_config_path, get_project_config_path
+    path = get_project_config_path() if project else get_global_config_path()
+    if path and has_comments(path):
+        if not _confirm(
+            f"\u26a0 {os.path.basename(path)} has comments that will be removed by this write.\nProceed?"
+        ):
+            sys.exit(1)
+
+
 def cmd_allow(args: argparse.Namespace) -> None:
     """Allow an action type."""
-    from nah.remember import write_action
+    from nah.remember import write_action, CustomTypeError
+    _warn_comments(args.project)
     try:
         msg = write_action(args.action_type, "allow", project=args.project)
+        print(msg)
+    except CustomTypeError:
+        if not _confirm(f"\u26a0 '{args.action_type}' is not a built-in type. Create it?"):
+            sys.exit(1)
+        msg = write_action(args.action_type, "allow", project=args.project, allow_custom=True)
         print(msg)
     except (ValueError, RuntimeError) as e:
         print(str(e), file=sys.stderr)
@@ -462,9 +491,15 @@ def cmd_allow(args: argparse.Namespace) -> None:
 
 def cmd_deny(args: argparse.Namespace) -> None:
     """Deny an action type."""
-    from nah.remember import write_action
+    from nah.remember import write_action, CustomTypeError
+    _warn_comments(args.project)
     try:
         msg = write_action(args.action_type, "block", project=args.project)
+        print(msg)
+    except CustomTypeError:
+        if not _confirm(f"\u26a0 '{args.action_type}' is not a built-in type. Create it?"):
+            sys.exit(1)
+        msg = write_action(args.action_type, "block", project=args.project, allow_custom=True)
         print(msg)
     except (ValueError, RuntimeError) as e:
         print(str(e), file=sys.stderr)
@@ -474,6 +509,7 @@ def cmd_deny(args: argparse.Namespace) -> None:
 def cmd_allow_path(args: argparse.Namespace) -> None:
     """Allow a sensitive path for the current project."""
     from nah.remember import write_allow_path
+    _warn_comments(project=False)
     try:
         msg = write_allow_path(args.path)
         print(msg)
@@ -484,9 +520,15 @@ def cmd_allow_path(args: argparse.Namespace) -> None:
 
 def cmd_classify(args: argparse.Namespace) -> None:
     """Classify a command prefix as an action type."""
-    from nah.remember import write_classify
+    from nah.remember import write_classify, CustomTypeError
+    _warn_comments(args.project)
     try:
         msg = write_classify(args.command_prefix, args.type, project=args.project)
+        print(msg)
+    except CustomTypeError:
+        if not _confirm(f"\u26a0 '{args.type}' is not a built-in type. Create it?"):
+            sys.exit(1)
+        msg = write_classify(args.command_prefix, args.type, project=args.project, allow_custom=True)
         print(msg)
     except (ValueError, RuntimeError) as e:
         print(str(e), file=sys.stderr)
@@ -496,6 +538,7 @@ def cmd_classify(args: argparse.Namespace) -> None:
 def cmd_trust(args: argparse.Namespace) -> None:
     """Trust a network host."""
     from nah.remember import write_trust_host
+    _warn_comments(args.project)
     try:
         msg = write_trust_host(args.host, project=args.project)
         print(msg)

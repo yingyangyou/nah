@@ -7,6 +7,7 @@ import pytest
 
 from nah import paths, taxonomy
 from nah.config import reset_config
+from nah.remember import CustomTypeError
 
 
 @pytest.fixture(autouse=True)
@@ -114,7 +115,7 @@ class TestWriteClassify:
 
     def test_validates_action_type(self, patched_paths):
         from nah.remember import write_classify
-        with pytest.raises(ValueError, match="Unknown action type"):
+        with pytest.raises(CustomTypeError):
             write_classify("just", "invalid_type")
 
     def test_deduplicates(self, patched_paths):
@@ -206,6 +207,66 @@ class TestMissingYaml:
             with patch("builtins.__import__", side_effect=ImportError("no yaml")):
                 with pytest.raises(RuntimeError, match="PyYAML required"):
                     _ensure_yaml()
+
+
+class TestCustomTypeError:
+    def test_custom_type_raises_custom_error(self, patched_paths):
+        from nah.remember import write_action
+        with pytest.raises(CustomTypeError):
+            write_action("my_custom", "allow")
+
+    def test_typo_still_raises_valueerror(self, patched_paths):
+        from nah.remember import write_action
+        # Close match → ValueError with suggestion, NOT CustomTypeError
+        with pytest.raises(ValueError, match="Did you mean"):
+            write_action("git_histori_rewrite", "allow")
+        # Verify it's not a CustomTypeError
+        with pytest.raises(ValueError) as exc_info:
+            write_action("git_histori_rewrite", "allow")
+        assert not isinstance(exc_info.value, CustomTypeError)
+
+    def test_allow_custom_bypasses_validation(self, patched_paths, global_cfg):
+        from nah.remember import write_action, _read_config
+        msg = write_action("my_custom", "allow", allow_custom=True)
+        assert "my_custom" in msg
+        data = _read_config(global_cfg)
+        assert data["actions"]["my_custom"] == "allow"
+
+    def test_classify_custom_type_raises(self, patched_paths):
+        from nah.remember import write_classify
+        with pytest.raises(CustomTypeError):
+            write_classify("mycmd", "my_custom")
+
+    def test_classify_allow_custom(self, patched_paths, global_cfg):
+        from nah.remember import write_classify, _read_config
+        msg = write_classify("mycmd", "my_custom", allow_custom=True)
+        assert "Classified" in msg
+        data = _read_config(global_cfg)
+        assert "mycmd" in data["classify"]["my_custom"]
+
+
+class TestHasComments:
+    def test_has_comments_true(self, tmp_path):
+        from nah.remember import has_comments
+        f = tmp_path / "config.yaml"
+        f.write_text("# This is a comment\nactions:\n  git_safe: allow\n")
+        assert has_comments(str(f)) is True
+
+    def test_has_comments_false(self, tmp_path):
+        from nah.remember import has_comments
+        f = tmp_path / "config.yaml"
+        f.write_text("actions:\n  git_safe: allow\n")
+        assert has_comments(str(f)) is False
+
+    def test_has_comments_missing_file(self):
+        from nah.remember import has_comments
+        assert has_comments("/nonexistent/path/config.yaml") is False
+
+    def test_has_comments_shebang_ignored(self, tmp_path):
+        from nah.remember import has_comments
+        f = tmp_path / "script.yaml"
+        f.write_text("#!/bin/bash\nactions:\n  git_safe: allow\n")
+        assert has_comments(str(f)) is False
 
 
 class TestListRules:
