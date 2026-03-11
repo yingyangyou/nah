@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Decision constants (`ALLOW`, `ASK`, `BLOCK`, `CONTEXT`) and `STRICTNESS` ordering in taxonomy.py (FD-014)
 - Branded hook responses: `nah.` for block, `nah?` for ask (FD-014)
 - `llm.max_decision` config option caps LLM decision severity — prevents false-positive blocks by downgrading to ask with reasoning preserved (FD-041)
+- `llm.eligible` config option controls which ask categories the LLM can resolve — supports `"default"`, `"all"`, or an explicit list with `composition`, `sensitive`, `context` keywords and direct action type names (FD-043)
 - `_classify_git()` flag-dependent classifier for 12 dual-behavior git commands (tag, branch, config, reset, push, add, rm, clean, reflog, checkout, switch, restore), ~100 new git entries covering full porcelain + plumbing, complete gh CLI classification (~130 entries across 6 action types) (FD-017)
 - CLI now accepts custom action types with confirmation prompt — typos still caught via fuzzy matching, intentional custom types confirmed interactively, non-interactive input defaults to deny (FD-047)
 - CLI warns before overwriting config files that contain YAML comments, since `yaml.dump` strips them (FD-047)
