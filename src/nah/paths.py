@@ -8,7 +8,11 @@ from nah import taxonomy
 
 _HOME = os.path.expanduser("~")
 _HOOKS_DIR = os.path.realpath(os.path.join(_HOME, ".claude", "hooks"))
-_NAH_CONFIG_DIR = os.path.realpath(os.path.join(_HOME, ".config", "nah"))
+if sys.platform == "win32":
+    _NAH_CONFIG_DIR = os.path.realpath(os.path.join(
+        os.environ.get("APPDATA", _HOME), "nah"))
+else:
+    _NAH_CONFIG_DIR = os.path.realpath(os.path.join(_HOME, ".config", "nah"))
 
 # Sensitive paths: (resolved_dir, display_name, policy)
 # Hook path (~/.claude/hooks) and nah config (~/.config/nah) are NOT in this list —
@@ -29,6 +33,15 @@ _SENSITIVE_DIRS: list[tuple[str, str, str]] = [
     (os.path.realpath(os.path.join(_HOME, ".claude", "settings.json")), "~/.claude/settings.json", "ask"),
     (os.path.realpath(os.path.join(_HOME, ".claude", "settings.local.json")), "~/.claude/settings.local.json", "ask"),
 ]
+
+# On Windows, add platform-specific credential paths that differ from Unix.
+if sys.platform == "win32":
+    _APPDATA = os.environ.get("APPDATA", "")
+    if _APPDATA:
+        _SENSITIVE_DIRS.extend([
+            (os.path.realpath(os.path.join(_APPDATA, "gcloud")), "%APPDATA%\\gcloud", "ask"),
+            (os.path.realpath(os.path.join(_APPDATA, "GitHub CLI")), "%APPDATA%\\GitHub CLI", "ask"),
+        ])
 
 # Basename patterns: (basename, display_name, policy)
 _SENSITIVE_BASENAMES: list[tuple[str, str, str]] = [
@@ -103,12 +116,14 @@ def is_sensitive(resolved: str) -> tuple[bool, str, str]:
 
 
 def _split_path_parts(raw: str) -> list[str]:
-    """Split a Unix-like path into normalized components.
+    """Split a path into normalized components.
 
     This is intentionally string-based so it can reason about wildcard and
     command-substitution-style segments without executing shell syntax.
+    Handles both Unix (/) and Windows (\\) separators.
     """
-    return [part for part in raw.split("/") if part and part != "."]
+    import re as _re
+    return [part for part in _re.split(r'[\\/]', raw) if part and part != "."]
 
 
 def _home_relative_sensitive_entries() -> list[tuple[tuple[str, ...], str, str]]:
