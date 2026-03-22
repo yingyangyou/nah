@@ -4,6 +4,7 @@
   "kill -SIGKILL",
   "pkill",
   "killall",
+  "taskkill",
   "bd dolt start",
   "bd dolt stop",
   "bd dolt killall",

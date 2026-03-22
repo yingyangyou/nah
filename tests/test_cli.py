@@ -738,3 +738,58 @@ class TestShimTemplateWindowsCompat:
         import nah.cli as cli_mod
         assert "reconfigure" in cli_mod._SHIM_TEMPLATE
         assert 'encoding="utf-8"' in cli_mod._SHIM_TEMPLATE
+
+
+class TestWriteHookScriptUTF8:
+    """Hook script must be written/read as UTF-8 to avoid cp1252 corruption on Windows."""
+
+    def test_hook_written_as_utf8(self, tmp_path, monkeypatch):
+        """Hook script is written with UTF-8 encoding (em-dash survives round-trip)."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        cli_mod._write_hook_script()
+        # Read back as raw bytes — must be valid UTF-8
+        raw = hook_path.read_bytes()
+        content = raw.decode("utf-8")  # should not raise
+        assert "\u2014" in content or "nah guard" in content
+
+    def test_skip_write_reads_utf8(self, tmp_path, monkeypatch):
+        """Skip-write optimization reads existing file as UTF-8."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        # Write once
+        cli_mod._write_hook_script()
+        mtime1 = hook_path.stat().st_mtime_ns
+        # Write again — should skip because UTF-8 read matches
+        cli_mod._write_hook_script()
+        mtime2 = hook_path.stat().st_mtime_ns
+        assert mtime1 == mtime2
+
+    def test_stale_cp1252_gets_overwritten(self, tmp_path, monkeypatch):
+        """A cp1252-encoded hook file is detected as stale and overwritten."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        # Write a file with cp1252 em-dash (byte 0x97) that is invalid UTF-8
+        hook_path.write_bytes(b'# nah guard \x97 shim\nstale content\n')
+        cli_mod._write_hook_script()
+        # Should have been overwritten with valid UTF-8
+        content = hook_path.read_bytes().decode("utf-8")
+        assert "stale content" not in content
+        assert "nah" in content
+
+    def test_hook_script_valid_python_syntax(self, tmp_path, monkeypatch):
+        """Generated hook script has valid Python syntax (no encoding errors)."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        cli_mod._write_hook_script()
+        source = hook_path.read_text(encoding="utf-8")
+        # compile() will raise SyntaxError if the source has encoding issues
+        compile(source, str(hook_path), "exec")

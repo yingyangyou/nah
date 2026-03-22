@@ -664,3 +664,39 @@ class TestWindowsSensitivePaths:
         matched, _, policy = paths.is_sensitive(resolved)
         assert matched is True
         assert policy == "ask"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+class TestMsys2PathConversion:
+    """MSYS2/Git Bash drive paths (/d/..., /c/...) convert to Windows paths."""
+
+    def test_drive_letter_d(self):
+        result = paths.resolve_path("/d/Projects/foo")
+        assert result.startswith("D:\\")
+        assert "Projects" in result
+        assert "\\d\\" not in result
+
+    def test_drive_letter_c(self):
+        result = paths.resolve_path("/c/Windows/System32")
+        assert result.startswith("C:\\")
+        assert "\\c\\" not in result
+
+    def test_uppercase_preserved(self):
+        result = paths.resolve_path("/D/Projects/foo")
+        assert result.startswith("D:\\")
+
+    def test_bare_drive_letter(self):
+        """Just /d resolves to D:\\ root."""
+        result = paths.resolve_path("/d")
+        assert result.upper().startswith("D:\\")
+
+    def test_non_drive_path_unchanged(self):
+        """Regular absolute paths are not affected."""
+        result = paths.resolve_path("/usr/bin/env")
+        # On Windows this resolves relative to current drive
+        assert "\\usr\\" in result
+
+    def test_two_char_start_not_drive(self):
+        """Paths like /dd/foo are NOT drive letters (dd is two chars)."""
+        result = paths.resolve_path("/dd/foo")
+        assert "\\dd\\" in result

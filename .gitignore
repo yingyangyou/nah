@@ -28,3 +28,4 @@ scripts/
 *.db
 .beads/
 .molds/
+setup.md

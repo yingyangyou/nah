@@ -65,6 +65,9 @@ def resolve_path(raw: str) -> str:
     """Expand ~ and env vars, then resolve to absolute canonical path."""
     if not raw:
         return ""
+    # Convert MSYS2/Git Bash drive paths (/d/..., /c/...) to Windows (D:\..., C:\...)
+    if sys.platform == "win32" and len(raw) >= 2 and raw[0] == "/" and raw[1].isalpha() and (len(raw) == 2 or raw[2] == "/"):
+        raw = raw[1].upper() + ":" + raw[2:]
     expanded = os.path.expanduser(os.path.expandvars(raw))
     return os.path.realpath(expanded)
 

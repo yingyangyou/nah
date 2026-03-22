@@ -179,18 +179,18 @@ def _write_hook_script() -> None:
     # Skip write if content is identical
     if _HOOK_SCRIPT.exists():
         try:
-            if _HOOK_SCRIPT.read_text() == shim_content:
+            if _HOOK_SCRIPT.read_text(encoding="utf-8") == shim_content:
                 return
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             # Read is best-effort optimization; if it fails (race with
-            # deletion, permissions, disk), the safe default is to fall
-            # through to the write path which will surface real errors.
+            # deletion, permissions, disk, encoding mismatch), the safe
+            # default is to fall through to the write path.
             pass
 
     if _HOOK_SCRIPT.exists() and sys.platform != "win32":
         os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
 
-    with open(_HOOK_SCRIPT, "w") as f:
+    with open(_HOOK_SCRIPT, "w", encoding="utf-8") as f:
         f.write(shim_content)
 
     if sys.platform != "win32":
