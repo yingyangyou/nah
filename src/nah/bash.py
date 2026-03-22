@@ -1793,6 +1793,9 @@ def _resolve_script_path(tokens: list[str]) -> str | None:
         return None
 
     cmd = os.path.basename(tokens[0])
+    # Strip .exe suffix — powershell.exe → powershell (Windows)
+    if cmd.endswith(".exe"):
+        cmd = cmd[:-4]
 
     from nah.taxonomy import _INLINE_FLAGS, _MODULE_FLAGS, _VALUE_FLAGS, _normalize_interpreter
     cmd = _normalize_interpreter(cmd)
