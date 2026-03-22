@@ -6,7 +6,10 @@ import re
 import sys
 from datetime import datetime, timezone
 
-_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "nah")
+if sys.platform == "win32":
+    _CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "nah")
+else:
+    _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "nah")
 LOG_PATH = os.path.join(_CONFIG_DIR, "nah.log")
 _LOG_BACKUP = os.path.join(_CONFIG_DIR, "nah.log.1")
 
@@ -78,7 +81,7 @@ def build_entry(
 
     entry: dict = {
         "id": os.urandom(8).hex(),
-        "user": os.environ.get("USER", ""),
+        "user": os.environ.get("USER") or os.environ.get("USERNAME", ""),
         "agent": agent,
         "hook_version": hook_version,
         "tool": tool,

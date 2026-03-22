@@ -14,6 +14,8 @@ _MAX_UNWRAP_DEPTH = 5
 # Safe redirect sinks — /dev/ special files that are not real file writes.
 # Excludes block devices (/dev/sda, /dev/disk*) which are dangerous.
 _REDIRECT_SAFE_SINKS = frozenset({"/dev/null", "/dev/stderr", "/dev/stdout", "/dev/tty"})
+if sys.platform == "win32":
+    _REDIRECT_SAFE_SINKS = _REDIRECT_SAFE_SINKS | frozenset({"nul", "NUL", "con", "CON"})
 
 
 @dataclass

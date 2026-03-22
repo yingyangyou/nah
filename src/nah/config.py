@@ -9,7 +9,10 @@ from nah.taxonomy import POLICIES as _POLICIES, PROFILES as _PROFILES, STRICTNES
 class ConfigError(Exception):
     """Raised when a config file exists but fails to parse."""
 
-_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "nah")
+if sys.platform == "win32":
+    _CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "nah")
+else:
+    _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "nah")
 _GLOBAL_CONFIG = os.path.join(_CONFIG_DIR, "config.yaml")
 _PROJECT_CONFIG_NAME = ".nah.yaml"
 

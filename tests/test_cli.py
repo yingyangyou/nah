@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -432,9 +433,11 @@ class TestWriteHookScriptOptimization:
 
         cli_mod._write_hook_script()
         # Corrupt the file
-        hook_path.chmod(0o644)
+        if sys.platform != "win32":
+            hook_path.chmod(0o644)
         hook_path.write_text("stale")
-        hook_path.chmod(0o444)
+        if sys.platform != "win32":
+            hook_path.chmod(0o444)
 
         cli_mod._write_hook_script()
         assert "stale" not in hook_path.read_text()
@@ -471,19 +474,28 @@ class TestCmdClaude:
         monkeypatch.setattr(agents, "AGENT_SETTINGS", {agents.CLAUDE: settings_file})
 
         exec_calls = []
-        def mock_execvp(path, args):
-            exec_calls.append((path, args))
-            raise SystemExit(0)
-
-        with patch("shutil.which", return_value="/usr/bin/claude"), \
-             patch.object(os, "execvp", mock_execvp):
-            with pytest.raises(SystemExit):
-                cli_mod.cmd_claude(["--resume"])
+        if sys.platform == "win32":
+            def mock_call(args, **kwargs):
+                exec_calls.append((args[0], args[1:]))
+                return 0
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch("subprocess.call", mock_call):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["--resume"])
+        else:
+            def mock_execvp(path, args):
+                exec_calls.append((path, args))
+                raise SystemExit(0)
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch.object(os, "execvp", mock_execvp):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["--resume"])
 
         assert len(exec_calls) == 1
         path, args = exec_calls[0]
         assert path == "/usr/bin/claude"
-        assert args == ["claude", "--resume"]
+        assert "claude" in args
+        assert "--resume" in args
         assert "--settings" not in args
 
     def test_no_install_builds_settings_json(self, tmp_path, monkeypatch):
@@ -497,20 +509,29 @@ class TestCmdClaude:
         monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", tmp_path / "hooks" / "nah_guard.py")
 
         exec_calls = []
-        def mock_execvp(path, args):
-            exec_calls.append((path, args))
-            raise SystemExit(0)
-
-        with patch("shutil.which", return_value="/usr/bin/claude"), \
-             patch.object(os, "execvp", mock_execvp):
-            with pytest.raises(SystemExit):
-                cli_mod.cmd_claude(["-p", "fix bug"])
+        if sys.platform == "win32":
+            def mock_call(args, **kwargs):
+                exec_calls.append((args[0], args[1:]))
+                return 0
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch("subprocess.call", mock_call):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["-p", "fix bug"])
+        else:
+            def mock_execvp(path, args):
+                exec_calls.append((path, args))
+                raise SystemExit(0)
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch.object(os, "execvp", mock_execvp):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["-p", "fix bug"])
 
         assert len(exec_calls) == 1
         path, args = exec_calls[0]
-        assert args[0] == "claude"
-        assert args[1] == "--settings"
-        settings = json_mod.loads(args[2])
+        assert "claude" in args
+        assert "--settings" in args
+        settings_idx = list(args).index("--settings")
+        settings = json_mod.loads(args[settings_idx + 1])
         assert "PreToolUse" in settings["hooks"]
         assert "-p" in args
         assert "fix bug" in args
@@ -524,16 +545,24 @@ class TestCmdClaude:
         monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", tmp_path / "hooks" / "nah_guard.py")
 
         exec_calls = []
-        def mock_execvp(path, args):
-            exec_calls.append((path, args))
-            raise SystemExit(0)
+        if sys.platform == "win32":
+            def mock_call(args, **kwargs):
+                exec_calls.append((args[0], args[1:]))
+                return 0
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch("subprocess.call", mock_call):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude([])
+        else:
+            def mock_execvp(path, args):
+                exec_calls.append((path, args))
+                raise SystemExit(0)
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch.object(os, "execvp", mock_execvp):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude([])
 
-        with patch("shutil.which", return_value="/usr/bin/claude"), \
-             patch.object(os, "execvp", mock_execvp):
-            with pytest.raises(SystemExit):
-                cli_mod.cmd_claude([])
-
-        assert exec_calls[0][1][1] == "--settings"
+        assert "--settings" in exec_calls[0][1]
         assert (tmp_path / "hooks" / "nah_guard.py").exists()
 
     def test_writes_shim_when_missing(self, tmp_path, monkeypatch):
@@ -545,10 +574,16 @@ class TestCmdClaude:
         monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path / "hooks")
         monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", tmp_path / "hooks" / "nah_guard.py")
 
-        with patch("shutil.which", return_value="/usr/bin/claude"), \
-             patch.object(os, "execvp", side_effect=SystemExit(0)):
-            with pytest.raises(SystemExit):
-                cli_mod.cmd_claude([])
+        if sys.platform == "win32":
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch("subprocess.call", return_value=0):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude([])
+        else:
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch.object(os, "execvp", side_effect=SystemExit(0)):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude([])
 
         assert (tmp_path / "hooks" / "nah_guard.py").exists()
         assert "nah" in (tmp_path / "hooks" / "nah_guard.py").read_text()
@@ -563,14 +598,22 @@ class TestCmdClaude:
         monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", tmp_path / "hooks" / "nah_guard.py")
 
         exec_calls = []
-        def mock_execvp(path, args):
-            exec_calls.append((path, args))
-            raise SystemExit(0)
-
-        with patch("shutil.which", return_value="/usr/bin/claude"), \
-             patch.object(os, "execvp", mock_execvp):
-            with pytest.raises(SystemExit):
-                cli_mod.cmd_claude(["--resume", "--verbose"])
+        if sys.platform == "win32":
+            def mock_call(args_list, **kwargs):
+                exec_calls.append((args_list[0], args_list[1:]))
+                return 0
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch("subprocess.call", mock_call):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["--resume", "--verbose"])
+        else:
+            def mock_execvp(path, args):
+                exec_calls.append((path, args))
+                raise SystemExit(0)
+            with patch("shutil.which", return_value="/usr/bin/claude"), \
+                 patch.object(os, "execvp", mock_execvp):
+                with pytest.raises(SystemExit):
+                    cli_mod.cmd_claude(["--resume", "--verbose"])
 
         args = exec_calls[0][1]
         assert "--resume" in args
