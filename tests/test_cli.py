@@ -662,3 +662,79 @@ class TestHookCommand:
         assert len(parts) == 2
         assert "my python" in parts[0]
         assert "my user" in parts[1]
+
+
+# --- Windows compatibility ---
+
+
+class TestWindowsChmod:
+    """os.chmod calls are skipped on Windows."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_write_hook_no_chmod_error(self, tmp_path, monkeypatch):
+        """_write_hook_script succeeds on Windows without chmod errors."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        cli_mod._write_hook_script()
+        assert hook_path.exists()
+        content = hook_path.read_text()
+        assert "nah" in content
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_overwrite_hook_no_chmod_error(self, tmp_path, monkeypatch):
+        """Overwriting hook script works on Windows (no read-only lockout)."""
+        import nah.cli as cli_mod
+        hook_path = tmp_path / "nah_guard.py"
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path)
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", hook_path)
+        hook_path.write_text("stale")
+        cli_mod._write_hook_script()
+        assert "stale" not in hook_path.read_text()
+
+
+class TestCmdClaudeWindowsSubprocess:
+    """On Windows, cmd_claude uses subprocess.call instead of os.execvp."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_subprocess_call_used(self, tmp_path, monkeypatch):
+        """Windows path uses subprocess.call, not os.execvp."""
+        import nah.cli as cli_mod
+        from nah import agents
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text("{}")
+        monkeypatch.setattr(agents, "AGENT_SETTINGS", {agents.CLAUDE: settings_file})
+        monkeypatch.setattr(cli_mod, "_HOOKS_DIR", tmp_path / "hooks")
+        monkeypatch.setattr(cli_mod, "_HOOK_SCRIPT", tmp_path / "hooks" / "nah_guard.py")
+
+        call_args = []
+        def mock_call(args, **kwargs):
+            call_args.append(args)
+            return 0
+
+        with patch("shutil.which", return_value="C:\\Program Files\\claude.exe"), \
+             patch("subprocess.call", mock_call):
+            with pytest.raises(SystemExit) as exc_info:
+                cli_mod.cmd_claude(["--verbose"])
+            assert exc_info.value.code == 0
+
+        assert len(call_args) == 1
+        assert call_args[0][0] == "C:\\Program Files\\claude.exe"
+        assert "--verbose" in call_args[0]
+
+
+class TestShimTemplateWindowsCompat:
+    """Shim template contains Windows-aware code."""
+
+    def test_shim_has_platform_log_path(self):
+        """Shim template branches log path by platform."""
+        import nah.cli as cli_mod
+        assert 'sys.platform == "win32"' in cli_mod._SHIM_TEMPLATE
+        assert "APPDATA" in cli_mod._SHIM_TEMPLATE
+
+    def test_shim_has_utf8_reconfigure(self):
+        """Shim template reconfigures stdout to UTF-8 on Windows."""
+        import nah.cli as cli_mod
+        assert "reconfigure" in cli_mod._SHIM_TEMPLATE
+        assert 'encoding="utf-8"' in cli_mod._SHIM_TEMPLATE

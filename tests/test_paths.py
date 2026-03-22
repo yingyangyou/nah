@@ -597,3 +597,70 @@ class TestSettingsJsonProtection:
         resolved = paths.resolve_path("~/.claude/settings.json")
         matched, _, _ = paths.is_sensitive(resolved)
         assert matched is False
+
+
+# --- Windows compatibility ---
+
+
+class TestSplitPathParts:
+    """_split_path_parts handles both / and \\ separators."""
+
+    def test_unix_forward_slashes(self):
+        result = paths._split_path_parts("/home/user/.ssh/id_rsa")
+        assert result == ["home", "user", ".ssh", "id_rsa"]
+
+    def test_windows_backslashes(self):
+        result = paths._split_path_parts(r"C:\Users\test\.ssh\id_rsa")
+        assert result == ["C:", "Users", "test", ".ssh", "id_rsa"]
+
+    def test_mixed_separators(self):
+        result = paths._split_path_parts("C:\\Users/test/.ssh\\id_rsa")
+        assert result == ["C:", "Users", "test", ".ssh", "id_rsa"]
+
+    def test_dot_stripped(self):
+        result = paths._split_path_parts("./relative/path")
+        assert result == ["relative", "path"]
+
+    def test_empty(self):
+        assert paths._split_path_parts("") == []
+
+
+class TestWindowsConfigDir:
+    """_NAH_CONFIG_DIR is platform-appropriate."""
+
+    def test_config_dir_is_absolute(self):
+        assert os.path.isabs(paths._NAH_CONFIG_DIR)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_windows_config_dir_uses_appdata(self):
+        appdata = os.environ.get("APPDATA", "")
+        assert appdata, "APPDATA must be set on Windows"
+        assert paths._NAH_CONFIG_DIR.startswith(appdata)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix only")
+    def test_unix_config_dir_uses_dot_config(self):
+        home = os.path.expanduser("~")
+        assert paths._NAH_CONFIG_DIR.startswith(os.path.realpath(os.path.join(home, ".config")))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+class TestWindowsSensitivePaths:
+    """Windows-specific sensitive path entries."""
+
+    def test_appdata_gcloud_sensitive(self):
+        appdata = os.environ.get("APPDATA", "")
+        if not appdata:
+            pytest.skip("APPDATA not set")
+        resolved = os.path.realpath(os.path.join(appdata, "gcloud", "credentials.json"))
+        matched, _, policy = paths.is_sensitive(resolved)
+        assert matched is True
+        assert policy == "ask"
+
+    def test_appdata_github_cli_sensitive(self):
+        appdata = os.environ.get("APPDATA", "")
+        if not appdata:
+            pytest.skip("APPDATA not set")
+        resolved = os.path.realpath(os.path.join(appdata, "GitHub CLI", "state.json"))
+        matched, _, policy = paths.is_sensitive(resolved)
+        assert matched is True
+        assert policy == "ask"
