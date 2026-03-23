@@ -21,7 +21,10 @@ import sys, json, os, io
 # Capture real stdout immediately — before anything can reassign it.
 _REAL_STDOUT = sys.stdout
 _ASK = '{{"hookSpecificOutput": {{"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "nah: error, requesting confirmation"}}}}\\n'
-_LOG_PATH = os.path.join(os.path.expanduser("~"), ".config", "nah", "hook-errors.log")
+if sys.platform == "win32":
+    _LOG_PATH = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "nah", "hook-errors.log")
+else:
+    _LOG_PATH = os.path.join(os.path.expanduser("~"), ".config", "nah", "hook-errors.log")
 _LOG_MAX = 1_000_000  # 1 MB
 
 def _log_error(tool_name, error):
@@ -52,6 +55,13 @@ def _safe_write(data):
         _REAL_STDOUT.write(data)
         _REAL_STDOUT.flush()
     except BrokenPipeError:
+        pass
+
+# On Windows, ensure stdout uses UTF-8 for JSON output to avoid encoding errors.
+if sys.platform == "win32" and hasattr(_REAL_STDOUT, "reconfigure"):
+    try:
+        _REAL_STDOUT.reconfigure(encoding="utf-8")
+    except Exception:
         pass
 
 tool_name = ""
@@ -169,21 +179,22 @@ def _write_hook_script() -> None:
     # Skip write if content is identical
     if _HOOK_SCRIPT.exists():
         try:
-            if _HOOK_SCRIPT.read_text() == shim_content:
+            if _HOOK_SCRIPT.read_text(encoding="utf-8") == shim_content:
                 return
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             # Read is best-effort optimization; if it fails (race with
-            # deletion, permissions, disk), the safe default is to fall
-            # through to the write path which will surface real errors.
+            # deletion, permissions, disk, encoding mismatch), the safe
+            # default is to fall through to the write path.
             pass
 
-    if _HOOK_SCRIPT.exists():
+    if _HOOK_SCRIPT.exists() and sys.platform != "win32":
         os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
 
-    with open(_HOOK_SCRIPT, "w") as f:
+    with open(_HOOK_SCRIPT, "w", encoding="utf-8") as f:
         f.write(shim_content)
 
-    os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)  # 444
+    if sys.platform != "win32":
+        os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)  # 444
 
 
 def _install_for_agent(agent_key: str) -> None:
@@ -470,7 +481,8 @@ def cmd_uninstall(args: argparse.Namespace) -> None:
     if any_remaining:
         print(f"  Hook script: {_HOOK_SCRIPT} (kept — other agents still use it)")
     elif _HOOK_SCRIPT.exists():
-        os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IWUSR)
+        if sys.platform != "win32":
+            os.chmod(_HOOK_SCRIPT, stat.S_IRUSR | stat.S_IWUSR)
         _HOOK_SCRIPT.unlink()
         print(f"  Hook script: {_HOOK_SCRIPT} (deleted)")
     else:
@@ -831,11 +843,17 @@ def cmd_claude(user_args: list[str]) -> None:
                 break
 
     if already_installed:
-        os.execvp(claude_path, ["claude"] + user_args)
+        args = [claude_path, "claude"] + user_args
     else:
         _write_hook_script()
         settings_json = json.dumps(_build_hooks_settings())
-        os.execvp(claude_path, ["claude", "--settings", settings_json] + user_args)
+        args = [claude_path, "claude", "--settings", settings_json] + user_args
+
+    if sys.platform == "win32":
+        import subprocess
+        raise SystemExit(subprocess.call(args))
+    else:
+        os.execvp(claude_path, args[1:])
 
 
 def main():

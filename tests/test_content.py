@@ -467,3 +467,31 @@ class TestScanContentSizeLimit:
         scan_content(big)
         err = capsys.readouterr().err
         assert err.count("truncated") == 1
+
+
+# --- Windows destructive patterns ---
+
+
+class TestWindowsDestructivePatterns:
+    """Windows-specific destructive command detection."""
+
+    def test_remove_item_recurse(self):
+        matches = scan_content("Remove-Item C:\\temp -Recurse -Force")
+        assert any(m.category == "destructive" for m in matches)
+
+    def test_rd_slash_s(self):
+        matches = scan_content('rd /s /q C:\\project')
+        assert any(m.category == "destructive" for m in matches)
+
+    def test_rmdir_slash_s(self):
+        matches = scan_content('rmdir /s /q C:\\project')
+        assert any(m.category == "destructive" for m in matches)
+
+    def test_del_slash_f(self):
+        matches = scan_content('del /f /q important.txt')
+        assert any(m.category == "destructive" for m in matches)
+
+    def test_safe_windows_commands_no_match(self):
+        """Normal Windows commands don't trigger destructive."""
+        matches = scan_content('dir C:\\Users\\test')
+        assert not any(m.category == "destructive" for m in matches)

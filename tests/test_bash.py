@@ -1,6 +1,7 @@
 """Unit tests for nah.bash — full classification pipeline, no subprocess."""
 
 import os
+import sys
 
 import pytest
 
@@ -2131,3 +2132,26 @@ class TestExtractSubstitutions:
         assert len(proc) == 1
         # The ) inside quotes should not close the process sub
         assert 'echo "hello)"' == proc[0][0]
+
+
+# --- Windows compatibility ---
+
+
+class TestWindowsRedirectSinks:
+    """Windows NUL/CON are recognized as safe redirect sinks."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_nul_in_safe_sinks(self):
+        from nah.bash import _REDIRECT_SAFE_SINKS
+        assert "nul" in _REDIRECT_SAFE_SINKS
+        assert "NUL" in _REDIRECT_SAFE_SINKS
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_con_in_safe_sinks(self):
+        from nah.bash import _REDIRECT_SAFE_SINKS
+        assert "con" in _REDIRECT_SAFE_SINKS
+        assert "CON" in _REDIRECT_SAFE_SINKS
+
+    def test_dev_null_always_safe(self):
+        from nah.bash import _REDIRECT_SAFE_SINKS
+        assert "/dev/null" in _REDIRECT_SAFE_SINKS

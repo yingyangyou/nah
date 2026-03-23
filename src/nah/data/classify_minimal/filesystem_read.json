@@ -22,5 +22,8 @@
   "podman compose ps",
   "podman pod ps",
   "podman volume ls",
-  "podman network ls"
+  "podman network ls",
+  "findstr",
+  "tasklist",
+  "where"
 ]

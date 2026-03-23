@@ -1,6 +1,7 @@
 """Unit tests for nah.paths — path resolution, sensitive checks, project root."""
 
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -15,11 +16,12 @@ from nah.config import NahConfig
 class TestResolvePath:
     def test_tilde_expansion(self):
         result = paths.resolve_path("~/file.txt")
-        assert result.startswith("/")
+        assert os.path.isabs(result)
         assert "~" not in result
 
     def test_env_var_expansion(self):
-        result = paths.resolve_path("$HOME/file.txt")
+        home_var = "USERPROFILE" if sys.platform == "win32" else "HOME"
+        result = paths.resolve_path(f"${home_var}/file.txt")
         assert result == os.path.realpath(os.path.join(os.path.expanduser("~"), "file.txt"))
 
     def test_relative_path(self):
@@ -39,7 +41,7 @@ class TestResolvePath:
 class TestFriendlyPath:
     def test_home_prefix(self):
         home = os.path.expanduser("~")
-        assert paths.friendly_path(home + "/file.txt") == "~/file.txt"
+        assert paths.friendly_path(home + os.sep + "file.txt") == "~" + os.sep + "file.txt"
 
     def test_home_exact(self):
         home = os.path.expanduser("~")
@@ -59,14 +61,14 @@ class TestIsHookPath:
 
     def test_child_of_hooks(self):
         hooks = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "hooks"))
-        assert paths.is_hook_path(hooks + "/nah_guard.py") is True
+        assert paths.is_hook_path(hooks + os.sep + "nah_guard.py") is True
 
     def test_not_hooks(self):
         assert paths.is_hook_path("/tmp/something") is False
 
     def test_claude_but_not_hooks(self):
         claude = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude"))
-        assert paths.is_hook_path(claude + "/settings.json") is False
+        assert paths.is_hook_path(claude + os.sep + "settings.json") is False
 
     def test_empty(self):
         assert paths.is_hook_path("") is False
@@ -241,7 +243,8 @@ class TestCheckPath:
         assert "~/.terraformrc" in result["reason"]
 
     def test_sensitive_block_home_env_var(self):
-        result = paths.check_path("Read", "$HOME/.ssh/id_rsa")
+        home_var = "USERPROFILE" if sys.platform == "win32" else "HOME"
+        result = paths.check_path("Read", f"${home_var}/.ssh/id_rsa")
         assert result is not None
         assert result["decision"] == "block"
 
@@ -460,27 +463,26 @@ class TestSensitiveBasenamesConfigurable:
 
 
 class TestIsNahConfigPath:
-    """FD-075: is_nah_config_path() detects ~/.config/nah/ paths."""
+    """FD-075: is_nah_config_path() detects nah config paths."""
 
     def test_exact_config_dir(self):
-        resolved = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "nah"))
-        assert paths.is_nah_config_path(resolved) is True
+        assert paths.is_nah_config_path(paths._NAH_CONFIG_DIR) is True
 
     def test_child_of_config_dir(self):
-        resolved = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "nah", "config.yaml"))
+        resolved = os.path.realpath(os.path.join(paths._NAH_CONFIG_DIR, "config.yaml"))
         assert paths.is_nah_config_path(resolved) is True
 
     def test_not_config_dir(self):
         assert paths.is_nah_config_path("/tmp/something") is False
 
     def test_config_sibling_not_matched(self):
-        """~/.config/other is not nah config."""
-        resolved = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "other"))
+        """Sibling of config dir is not nah config."""
+        resolved = os.path.realpath(os.path.join(os.path.dirname(paths._NAH_CONFIG_DIR), "other"))
         assert paths.is_nah_config_path(resolved) is False
 
     def test_prefix_collision(self):
-        """~/.config/nah-evil should not match (prefix without separator)."""
-        resolved = os.path.realpath(os.path.join(os.path.expanduser("~"), ".config", "nah-evil"))
+        """nah-evil should not match (prefix without separator)."""
+        resolved = os.path.realpath(os.path.join(os.path.dirname(paths._NAH_CONFIG_DIR), "nah-evil"))
         assert paths.is_nah_config_path(resolved) is False
 
     def test_empty(self):
@@ -488,13 +490,17 @@ class TestIsNahConfigPath:
 
 
 class TestConfigSelfProtection:
-    """FD-075: check_path and check_path_basic protect ~/.config/nah/."""
+    """FD-075: check_path and check_path_basic protect nah config dir."""
 
     def setup_method(self):
         paths._sensitive_paths_merged = True
 
+    @property
+    def _config_yaml(self):
+        return os.path.join(paths._NAH_CONFIG_DIR, "config.yaml")
+
     def test_check_path_basic_returns_ask(self):
-        resolved = paths.resolve_path("~/.config/nah/config.yaml")
+        resolved = os.path.realpath(self._config_yaml)
         result = paths.check_path_basic(resolved)
         assert result is not None
         decision, reason = result
@@ -502,27 +508,27 @@ class TestConfigSelfProtection:
         assert "nah config" in reason
 
     def test_check_path_write_ask(self):
-        result = paths.check_path("Write", "~/.config/nah/config.yaml")
+        result = paths.check_path("Write", self._config_yaml)
         assert result is not None
         assert result["decision"] == "ask"
         assert "nah config" in result["reason"]
         assert "guard self-protection" in result["reason"]
 
     def test_check_path_edit_ask(self):
-        result = paths.check_path("Edit", "~/.config/nah/config.yaml")
+        result = paths.check_path("Edit", self._config_yaml)
         assert result is not None
         assert result["decision"] == "ask"
         assert "nah config" in result["reason"]
 
     def test_check_path_read_ask(self):
-        result = paths.check_path("Read", "~/.config/nah/config.yaml")
+        result = paths.check_path("Read", self._config_yaml)
         assert result is not None
         assert result["decision"] == "ask"
         assert "nah config" in result["reason"]
 
     def test_not_block_like_hook(self):
         """Config path gets ASK for Write/Edit, NOT BLOCK (unlike hook path)."""
-        write_result = paths.check_path("Write", "~/.config/nah/config.yaml")
+        write_result = paths.check_path("Write", self._config_yaml)
         hook_result = paths.check_path("Write", "~/.claude/hooks/nah_guard.py")
         assert write_result["decision"] == "ask"
         assert hook_result["decision"] == "block"
@@ -534,7 +540,7 @@ class TestConfigSelfProtection:
         paths._SENSITIVE_BASENAMES.clear()
 
         # Config path should STILL be caught (hardcoded, not in _SENSITIVE_DIRS)
-        result = paths.check_path("Write", "~/.config/nah/config.yaml")
+        result = paths.check_path("Write", self._config_yaml)
         assert result is not None
         assert result["decision"] == "ask"
         assert "nah config" in result["reason"]
@@ -546,14 +552,16 @@ class TestConfigSelfProtection:
         assert result_ssh is None
 
     def test_subdirectory_protected(self):
-        """Subdirectories of ~/.config/nah/ are also protected."""
-        result = paths.check_path("Write", "~/.config/nah/subdir/file.txt")
+        """Subdirectories of nah config dir are also protected."""
+        subpath = os.path.join(paths._NAH_CONFIG_DIR, "subdir", "file.txt")
+        result = paths.check_path("Write", subpath)
         assert result is not None
         assert result["decision"] == "ask"
 
     def test_nah_log_protected(self):
         """Log file in config dir is protected."""
-        result = paths.check_path("Write", "~/.config/nah/nah.log")
+        logpath = os.path.join(paths._NAH_CONFIG_DIR, "nah.log")
+        result = paths.check_path("Write", logpath)
         assert result is not None
         assert result["decision"] == "ask"
 
@@ -589,3 +597,106 @@ class TestSettingsJsonProtection:
         resolved = paths.resolve_path("~/.claude/settings.json")
         matched, _, _ = paths.is_sensitive(resolved)
         assert matched is False
+
+
+# --- Windows compatibility ---
+
+
+class TestSplitPathParts:
+    """_split_path_parts handles both / and \\ separators."""
+
+    def test_unix_forward_slashes(self):
+        result = paths._split_path_parts("/home/user/.ssh/id_rsa")
+        assert result == ["home", "user", ".ssh", "id_rsa"]
+
+    def test_windows_backslashes(self):
+        result = paths._split_path_parts(r"C:\Users\test\.ssh\id_rsa")
+        assert result == ["C:", "Users", "test", ".ssh", "id_rsa"]
+
+    def test_mixed_separators(self):
+        result = paths._split_path_parts("C:\\Users/test/.ssh\\id_rsa")
+        assert result == ["C:", "Users", "test", ".ssh", "id_rsa"]
+
+    def test_dot_stripped(self):
+        result = paths._split_path_parts("./relative/path")
+        assert result == ["relative", "path"]
+
+    def test_empty(self):
+        assert paths._split_path_parts("") == []
+
+
+class TestWindowsConfigDir:
+    """_NAH_CONFIG_DIR is platform-appropriate."""
+
+    def test_config_dir_is_absolute(self):
+        assert os.path.isabs(paths._NAH_CONFIG_DIR)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_windows_config_dir_uses_appdata(self):
+        appdata = os.environ.get("APPDATA", "")
+        assert appdata, "APPDATA must be set on Windows"
+        assert paths._NAH_CONFIG_DIR.startswith(appdata)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix only")
+    def test_unix_config_dir_uses_dot_config(self):
+        home = os.path.expanduser("~")
+        assert paths._NAH_CONFIG_DIR.startswith(os.path.realpath(os.path.join(home, ".config")))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+class TestWindowsSensitivePaths:
+    """Windows-specific sensitive path entries."""
+
+    def test_appdata_gcloud_sensitive(self):
+        appdata = os.environ.get("APPDATA", "")
+        if not appdata:
+            pytest.skip("APPDATA not set")
+        resolved = os.path.realpath(os.path.join(appdata, "gcloud", "credentials.json"))
+        matched, _, policy = paths.is_sensitive(resolved)
+        assert matched is True
+        assert policy == "ask"
+
+    def test_appdata_github_cli_sensitive(self):
+        appdata = os.environ.get("APPDATA", "")
+        if not appdata:
+            pytest.skip("APPDATA not set")
+        resolved = os.path.realpath(os.path.join(appdata, "GitHub CLI", "state.json"))
+        matched, _, policy = paths.is_sensitive(resolved)
+        assert matched is True
+        assert policy == "ask"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+class TestMsys2PathConversion:
+    """MSYS2/Git Bash drive paths (/d/..., /c/...) convert to Windows paths."""
+
+    def test_drive_letter_d(self):
+        result = paths.resolve_path("/d/Projects/foo")
+        assert result.startswith("D:\\")
+        assert "Projects" in result
+        assert "\\d\\" not in result
+
+    def test_drive_letter_c(self):
+        result = paths.resolve_path("/c/Windows/System32")
+        assert result.startswith("C:\\")
+        assert "\\c\\" not in result
+
+    def test_uppercase_preserved(self):
+        result = paths.resolve_path("/D/Projects/foo")
+        assert result.startswith("D:\\")
+
+    def test_bare_drive_letter(self):
+        """Just /d resolves to D:\\ root."""
+        result = paths.resolve_path("/d")
+        assert result.upper().startswith("D:\\")
+
+    def test_non_drive_path_unchanged(self):
+        """Regular absolute paths are not affected."""
+        result = paths.resolve_path("/usr/bin/env")
+        # On Windows this resolves relative to current drive
+        assert "\\usr\\" in result
+
+    def test_two_char_start_not_drive(self):
+        """Paths like /dd/foo are NOT drive letters (dd is two chars)."""
+        result = paths.resolve_path("/dd/foo")
+        assert "\\dd\\" in result

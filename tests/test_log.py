@@ -401,3 +401,43 @@ class TestBuildEntryRoundTrip:
         assert entries[0]["input"] == "ls"
         assert entries[0]["ms"] == 18
         assert entries[0]["project"] == "/tmp/project"
+
+
+# --- Windows compatibility ---
+
+
+class TestWindowsUsername:
+    """USERNAME fallback for Windows (USER not set)."""
+
+    def test_username_fallback(self, monkeypatch):
+        """When USER is not set, falls back to USERNAME."""
+        monkeypatch.delenv("USER", raising=False)
+        monkeypatch.setenv("USERNAME", "testwin")
+        with patch("nah.paths.get_project_root", return_value="/tmp/project"):
+            entry = log.build_entry(
+                tool="Bash", input_summary="dir", decision="allow", reason="",
+                agent="claude", hook_version="0.5.2", total_ms=5, meta={},
+            )
+        assert entry["user"] == "testwin"
+
+    def test_user_takes_precedence(self, monkeypatch):
+        """When USER is set, it takes precedence over USERNAME."""
+        monkeypatch.setenv("USER", "unixuser")
+        monkeypatch.setenv("USERNAME", "winuser")
+        with patch("nah.paths.get_project_root", return_value="/tmp/project"):
+            entry = log.build_entry(
+                tool="Bash", input_summary="ls", decision="allow", reason="",
+                agent="claude", hook_version="0.5.2", total_ms=5, meta={},
+            )
+        assert entry["user"] == "unixuser"
+
+    def test_neither_set_empty(self, monkeypatch):
+        """When neither USER nor USERNAME is set, user is empty."""
+        monkeypatch.delenv("USER", raising=False)
+        monkeypatch.delenv("USERNAME", raising=False)
+        with patch("nah.paths.get_project_root", return_value="/tmp/project"):
+            entry = log.build_entry(
+                tool="Bash", input_summary="ls", decision="allow", reason="",
+                agent="claude", hook_version="0.5.2", total_ms=5, meta={},
+            )
+        assert entry["user"] == ""

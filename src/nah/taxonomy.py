@@ -170,6 +170,8 @@ _INLINE_FLAGS: dict[str, set[str]] = {
     "perl": {"-e", "-E"},
     "php": {"-r"},
     "bash": {"-c"}, "sh": {"-c"}, "dash": {"-c"}, "zsh": {"-c"},
+    "powershell": {"-Command", "-c"}, "pwsh": {"-Command", "-c"},
+    "cmd": {"/c", "/k"},
 }
 
 # Flags that mean module mode (still lang_exec, but different path resolution).
@@ -193,7 +195,7 @@ _SCRIPT_EXTENSIONS = {".py", ".js", ".rb", ".sh", ".pl", ".ts", ".php", ".tsx"}
 # Exec sinks for pipe composition.
 _EXEC_SINKS_DEFAULTS = {"bash", "sh", "dash", "zsh", "eval", "python", "python3",
                          "node", "ruby", "perl", "php", "bun", "deno", "fish", "pwsh",
-                         "env"}
+                         "powershell", "cmd", "env"}
 EXEC_SINKS: set[str] = set(_EXEC_SINKS_DEFAULTS)
 _exec_sinks_merged = False
 
@@ -333,6 +335,10 @@ def classify_tokens(
     base = os.path.basename(tokens[0])
     if base and base != tokens[0]:
         tokens = [base] + tokens[1:]
+
+    # Strip .exe suffix — .venv\Scripts\python.exe → python (Windows)
+    if tokens[0].endswith(".exe"):
+        tokens = [tokens[0][:-4]] + tokens[1:]
 
     # Version normalization — python3.12 → python3 (nah-1o5)
     normalized = _normalize_interpreter(tokens[0])

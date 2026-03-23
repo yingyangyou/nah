@@ -16,6 +16,7 @@ _build/
 # Internal dev files (kept locally, not tracked)
 docs/features/
 docs/PLAN.md
+CLAUDE.md
 .claude/*
 !.claude/commands/
 site/
@@ -28,3 +29,4 @@ scripts/
 *.db
 .beads/
 .molds/
+setup.md

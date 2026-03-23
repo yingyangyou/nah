@@ -1,0 +1,113 @@
+profile: full
+actions:
+  git_remote_write: allow
+  package_uninstall: allow
+  process_signal: allow
+  lang_exec: context
+  filesystem_write: allow
+  filesystem_delete: context
+  network_outbound: context
+  network_write: context
+  db_write: context
+classify:
+  git_write:
+  - git add
+  - git commit
+  - git pull
+  - git checkout
+  - git switch
+  - git merge
+  - git rebase
+  - git stash
+  - git branch
+  - git tag
+  git_remote_write:
+  - git push
+  - gh
+  git_safe:
+  - git fetch
+  - git
+  lang_exec:
+  - bash -c
+  - bash
+  - sh -c
+  - python
+  - python3
+  - node
+  - sed
+  - awk
+  - xargs
+  - env
+  - export
+  - source
+  - .
+  filesystem_read:
+  - mcp__playwright__browser_navigate
+  - mcp__playwright__browser_take_screenshot
+  - mcp__playwright__browser_console_messages
+  - mcp__playwright__browser_wait_for
+  - mcp__playwright__browser_click
+  - mcp__playwright__browser_snapshot
+  - mcp__playwright__browser_type
+  - mcp__playwright__browser_select_option
+  - mcp__playwright__browser_hover
+  - mcp__playwright__browser_evaluate
+  - mcp__playwright__browser_close
+  - mcp__playwright__browser_network_requests
+  - mcp__playwright__browser_press_key
+  - mcp__playwright__browser_drag
+  - mcp__playwright__browser_resize
+  - mcp__playwright__browser_tab_list
+  - mcp__playwright__browser_tab_new
+  - mcp__playwright__browser_tab_select
+  - mcp__playwright__browser_tab_close
+  - mcp__playwright__browser_generate_pdf
+  - mcp__playwright__browser_install
+  - dir
+  package_install:
+  - pip
+  - pip install
+  - npm install
+  - pnpm install
+  - pnpm add
+  package_run:
+  - npm
+  - npm run
+  - npx
+  - pnpm
+  - pnpm run
+  - pnpm build
+  - pnpm exec
+  - docker
+  - docker-compose
+  - python -m pytest
+  - python -m nah
+  - python -m pip
+  - python -m py_compile
+  - python -m ruff
+  - ruff
+  filesystem_write:
+  - mkdir
+  - cp
+  - mv
+  - touch
+  - tee
+  filesystem_delete:
+  - rm
+  network_outbound:
+  - curl
+  - wget
+known_registries:
+- D:\Projects          # your workspace root
+trusted_paths:
+- D:\Projects          # your workspace root
+# - C:\Users\you\other-workspace
+# - C:\Users\you\.claude\plugins\cache
+llm:
+  enabled: true
+  providers: [azure]
+  azure:
+    url: https://{resource}.cognitiveservices.azure.com/openai/v1/chat/completions
+    key_env: AZURE_OPENAI_API_KEY
+    model: gpt-5.3-chat
+    timeout: 15

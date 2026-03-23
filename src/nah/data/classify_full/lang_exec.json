@@ -8,5 +8,11 @@
   "perl -e",
   "php -r",
   "gh api",
-  "gh extension exec"
+  "gh extension exec",
+  "powershell -Command",
+  "powershell -c",
+  "pwsh -Command",
+  "pwsh -c",
+  "cmd /c",
+  "cmd /k"
 ]
